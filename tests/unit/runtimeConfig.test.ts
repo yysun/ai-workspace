@@ -1,7 +1,7 @@
 /*
  * Feature: unit tests for llm-runtime request configuration helpers.
  * Notes: verifies prompt composition and generic LLM_* defaults without requiring live provider calls.
- * Recent changes: updated tests for generic runtime defaults and provider/model resolution.
+ * Recent changes: moved unit coverage into tests/unit.
  */
 
 import assert from "node:assert/strict";
@@ -14,8 +14,8 @@ import {
   resolveMaxTokens,
   resolveRuntimeTarget,
   resolveTemperature
-} from "./runtimeConfig.js";
-import type { EnvConfig } from "../config/env.js";
+} from "../../src/runtime/runtimeConfig.js";
+import type { EnvConfig } from "../../src/config/env.js";
 
 const baseEnv: EnvConfig = {
   port: 3000,

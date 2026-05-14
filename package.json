@@ -9,7 +9,10 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "npm run test:unit && npm run test:targeted && npm run test:e2e",
+    "test:unit": "node --import tsx --test tests/unit/**/*.test.ts",
+    "test:targeted": "node --import tsx --test tests/targeted/**/*.test.ts",
+    "test:e2e": "node --import tsx --test tests/e2e/**/*.test.ts"
   },
   "engines": {
     "node": ">=22"

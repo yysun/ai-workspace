@@ -20,6 +20,7 @@ cp .env.example .env
 
 ```bash
 npm install
+npm test
 npm run build
 npm run dev
 ```
@@ -59,6 +60,36 @@ curl http://localhost:3000/chat/completions \
     ]
   }'
 ```
+
+With a valid request body, the server will either return a normal completion response or a clear `5xx` runtime error when no provider is configured. Invalid JSON or invalid request shapes return `400`.
+
+## Testing
+
+Run the full automated test suite:
+
+```bash
+npm test
+```
+
+Run only unit tests:
+
+```bash
+npm run test:unit
+```
+
+Run targeted integration-style tests:
+
+```bash
+npm run test:targeted
+```
+
+Run only end-to-end HTTP tests:
+
+```bash
+npm run test:e2e
+```
+
+The repository also includes manual HTTP request examples under `tests/http/` for quick local checks.
 
 ## Mount a workspace
 
@@ -103,6 +134,8 @@ Required endpoints:
 When `stream` is `true`, chat responses are returned as SSE with events such as `message.delta`, `message.done`, and `done`.
 
 When `stream` is not `true`, the server still uses the same runtime event stream internally and returns an aggregated JSON response.
+
+When a request is rejected with `400`, the server logs request diagnostics including a truncated body preview to help debug malformed JSON or invalid payloads. Runtime `5xx` errors do not log chat message bodies.
 
 ## Skill loading behavior
 

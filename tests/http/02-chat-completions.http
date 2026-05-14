@@ -13,7 +13,7 @@ Content-Type: {{contentType}}
   "messages": [
     {
       "role": "user",
-      "content": "Summarize the loaded workspace context."
+      "content": "tell me about Jazz Gill in a PDF"
     }
   ]
 }
