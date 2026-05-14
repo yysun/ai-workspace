@@ -1,0 +1,18 @@
+@baseUrl = http://localhost:3000
+@contentType = application/json
+
+### Alias endpoint should match /chat/completions
+# Expected: same behavior as the main chat endpoint.
+POST {{baseUrl}}/chat
+Content-Type: {{contentType}}
+
+{
+  "model": "default",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the loaded workspace context."
+    }
+  ]
+}

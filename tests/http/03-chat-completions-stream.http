@@ -1,0 +1,20 @@
+@baseUrl = http://localhost:3000
+@contentType = application/json
+
+### Streaming chat completion
+# Expected: SSE with message.delta/message.done/done when a provider is configured.
+# Expected: SSE error plus done when no provider credentials are configured.
+POST {{baseUrl}}/chat/completions
+Content-Type: {{contentType}}
+Accept: text/event-stream
+
+{
+  "model": "default",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello. What workspace instructions are loaded?"
+    }
+  ]
+}
