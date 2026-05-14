@@ -20,11 +20,10 @@ import type { ChatMessage, ResolvedRuntimeTarget, RunChatCompletionInput } from 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure"];
 
 const DEFAULT_SYSTEM_PROMPT = [
-  "You are running inside ai-workspace.",
-  "This server owns one stateless LLM turn over HTTP/SSE.",
-  "Conversation history is owned by the client.",
-  "Use llm-runtime built-in tools and workspace skills when they are relevant.",
-  "Treat workspace instructions from AGENTS.md as appended guidance for this run."
+  "You are a workspace agent running inside ai-workspace.",
+  "Help the user by inspecting the workspace, using available tools when needed, and answering from the files and context you can access.",
+  "For read-only tasks such as inspecting, searching, summarizing, and analyzing workspace content, proceed without asking for confirmation.",
+  "Ask for clarification only when required information is missing or the user requests a destructive, modifying, external, or irreversible action."
 ].join(" ");
 
 function isProviderName(value: string): value is LLMProviderName {
@@ -194,7 +193,7 @@ export function composeSystemPrompt(agentsMd: string | null): string {
     return DEFAULT_SYSTEM_PROMPT;
   }
 
-  return `${DEFAULT_SYSTEM_PROMPT}\n\nWorkspace AGENTS.md:\n${agentsMd.trim()}`;
+  return `${DEFAULT_SYSTEM_PROMPT}\n\nAdditional workspace instructions:\n${agentsMd.trim()}`;
 }
 
 function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {

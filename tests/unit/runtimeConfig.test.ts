@@ -32,8 +32,8 @@ const baseEnv: EnvConfig = {
 test("composeSystemPrompt appends AGENTS.md content to the default system prompt", () => {
   const prompt = composeSystemPrompt("Always cite the workspace policy.");
 
-  assert.match(prompt, /You are running inside ai-workspace\./);
-  assert.match(prompt, /Workspace AGENTS\.md:\nAlways cite the workspace policy\./);
+  assert.match(prompt, /You are a workspace agent running inside ai-workspace\./);
+  assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
 });
 
 test("buildRuntimeMessages prepends one system message before user content", () => {

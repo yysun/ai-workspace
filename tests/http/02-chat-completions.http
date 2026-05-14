@@ -13,7 +13,7 @@ Content-Type: {{contentType}}
   "messages": [
     {
       "role": "user",
-      "content": "tell me about Jazz Gill in a PDF"
+      "content": "tell me about CRM contact Jazz Gill in a PDF"
     }
   ]
 }
