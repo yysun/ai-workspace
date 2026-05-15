@@ -4,7 +4,7 @@
  * Recent changes: added tool-call ids to streamed tool activity events for interactive client handling.
  */
 
-import type { LLMProviderName } from "llm-runtime";
+import type { LLMProviderName, LLMToolCall } from "llm-runtime";
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
@@ -12,6 +12,7 @@ export type ChatMessage = {
   role: ChatRole;
   content: string;
   name?: string;
+  tool_calls?: LLMToolCall[];
   tool_call_id?: string;
 };
 

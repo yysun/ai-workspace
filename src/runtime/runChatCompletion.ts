@@ -5,16 +5,10 @@
  */
 
 import {
-  createLLMEnvironment,
-  DEFAULT_TOOL_VALIDATION_RECOVERY_INSTRUCTION,
-  disposeLLMEnvironment,
-  parseToolValidationFailureArtifact,
-  resolveToolsAsync,
-  respondWithTools,
+  createRuntime,
   type LLMChatMessage,
-  type LLMEnvironment,
-  type LLMResponse,
-  type LLMToolDefinition
+  type LLMRuntime,
+  type LLMToolCall
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import { loadAgentsMd } from "../workspace/loadAgentsMd.js";
@@ -242,270 +236,135 @@ export function prepareToolCallArguments(
   };
 }
 
-function createToolExecutionContext(
-  input: RunChatCompletionInput,
-  environment: LLMEnvironment,
-  messages: LLMChatMessage[],
-  toolCallId: string | undefined
-) {
-  return {
-    workingDirectory: input.workspaceRoot,
-    abortSignal: input.signal,
-    toolPermission: environment.defaults.toolPermission,
-    reasoningEffort: environment.defaults.reasoningEffort,
-    ...(toolCallId ? { toolCallId } : {}),
-    messages: messages as unknown as Array<Record<string, unknown>>
-  };
-}
-
-function createMissingToolResult(toolName: string): { error: string } {
-  return {
-    error: `llm-runtime did not resolve an executable tool named ${toolName}`
-  };
-}
-
-async function executeToolCall(
-  tool: LLMToolDefinition | undefined,
-  toolName: string,
-  args: Record<string, unknown>,
-  input: RunChatCompletionInput,
-  environment: LLMEnvironment,
-  messages: LLMChatMessage[],
-  toolCallId: string | undefined
-): Promise<unknown> {
-  if (!tool?.execute) {
-    return createMissingToolResult(toolName);
-  }
-
-  return await tool.execute(
-    args,
-    createToolExecutionContext(input, environment, messages, toolCallId)
+function parseToolCallEventArgs(toolCall: LLMToolCall): { executionArgs: Record<string, unknown>; eventArgs: Record<string, unknown> } {
+  return prepareToolCallArguments(
+    toolCall.function.name,
+    safeParseToolArguments(toolCall.function.arguments)
   );
 }
 
-function extractFinalMessage(result: { state: RuntimeState; response: LLMResponse | null; reason: string }): { role: "assistant"; content: string } | null {
-  const stateMessage = result.state.finalMessage;
-  if (stateMessage) {
-    return {
-      role: "assistant",
-      content: result.state.finalText || stateMessage.content
-    };
-  }
-
-  if (result.reason !== "text_response") {
-    return null;
-  }
-
-  const responseMessage = result.response?.assistantMessage;
-  if (responseMessage) {
-    return {
-      role: "assistant",
-      content: result.response?.content ?? responseMessage.content
-    };
-  }
-
-  return null;
+function isHumanInputToolName(toolName: string): boolean {
+  return HUMAN_INPUT_TOOL_NAMES.has(toolName);
 }
 
 export async function* runChatCompletion(
   input: RunChatCompletionInput,
   env: EnvConfig
 ): AsyncIterable<RuntimeEvent> {
-  const eventQueue = createAsyncEventQueue<RuntimeEvent>();
+  let restoreWorkspaceEnv: () => void = () => undefined;
+  let environment: LLMRuntime | undefined;
 
-  void (async () => {
-    let restoreWorkspaceEnv: () => void = () => undefined;
-    let environment: LLMEnvironment | undefined;
-    let pendingAssistantText = "";
+  try {
+    const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
+      target: process.env,
+      override: true
+    });
+    restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
 
-    try {
-      const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
-        target: process.env,
-        override: true
-      });
-      restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
+    const agentsMd = await loadAgentsMd(input.workspaceRoot);
+    const builtIns = createBuiltInSelection();
+    const runtimeTarget = resolveRuntimeTarget(input, env);
+    environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
 
-      const agentsMd = await loadAgentsMd(input.workspaceRoot);
-      const builtIns = createBuiltInSelection();
-      const runtimeTarget = resolveRuntimeTarget(input, env);
-      const requestEnvironment = createLLMEnvironment(createEnvironmentOptions(env, input.workspaceRoot));
-      environment = requestEnvironment;
-
-      const resolvedTools = await resolveToolsAsync({
-        environment: requestEnvironment,
-        builtIns
-      });
-
-      const result = await respondWithTools({
-        initialState: {
-          messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
-          finalText: "",
-          stoppedForHumanInput: false
-        },
-        emptyTextRetryLimit: 0,
-        rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
-        markSyntheticToolCalls: true,
+    for await (const event of environment.streamComplete({
+      provider: runtimeTarget.provider,
+      model: runtimeTarget.model,
+      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
+      temperature: resolveTemperature(input, env),
+      maxTokens: resolveMaxTokens(input, env),
+      builtIns,
+      defaultTextResponseMode: "require_tool_result",
+      rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
+      context: {
+        workingDirectory: input.workspaceRoot,
         abortSignal: input.signal,
-        modelRequest: {
-          mode: "stream",
-          environment: requestEnvironment,
-          provider: runtimeTarget.provider,
-          model: runtimeTarget.model,
-          temperature: resolveTemperature(input, env),
-          maxTokens: resolveMaxTokens(input, env),
-          builtIns,
-          context: {
-            workingDirectory: input.workspaceRoot,
-            abortSignal: input.signal,
-            toolPermission: requestEnvironment.defaults.toolPermission,
-            reasoningEffort: requestEnvironment.defaults.reasoningEffort
-          },
-          onChunk: (chunk) => {
-            if (chunk.content) {
-              pendingAssistantText += chunk.content;
-            }
-          }
-        },
-        onIterationStart: () => {
-          pendingAssistantText = "";
-        },
-        buildMessages: async ({ state, transientInstruction }) => {
-          if (!transientInstruction) {
-            return state.messages;
+        toolPermission: environment.defaults.toolPermission,
+        reasoningEffort: environment.defaults.reasoningEffort
+      }
+    })) {
+      if (event.type === "assistant_message") {
+        for (const toolCall of event.message.tool_calls ?? []) {
+          if (!isHumanInputToolName(toolCall.function.name)) {
+            continue;
           }
 
-          return [
-            ...state.messages,
-            {
-              role: "system",
-              content: transientInstruction
-            }
-          ];
-        },
-        onRejectedTextResponse: async ({ state, classification, retryCount }) => {
-          pendingAssistantText = "";
-
-          if (retryCount < REJECTED_TEXT_RETRY_LIMIT) {
-            eventQueue.push({
-              type: "warning",
-              code: "assistant_text_rejected_without_evidence",
-              warning: `llm-runtime classified the assistant text as ${classification}; retrying.`
-            });
-          }
-
-          return { state };
-        },
-        onToolCallsResponse: async ({ state, response }) => {
-          const nextMessages = [...state.messages, response.assistantMessage];
-          let recoveryInstruction: string | undefined;
-          let stoppedForHumanInput = false;
-          pendingAssistantText = "";
-
-          for (const toolCall of response.tool_calls ?? []) {
-            const toolName = toolCall.function.name;
-            const parsedArgs = safeParseToolArguments(toolCall.function.arguments);
-            const preparedArgs = prepareToolCallArguments(toolName, parsedArgs);
-
-            eventQueue.push({
-              type: "tool.call",
-              name: toolName,
-              args: preparedArgs.eventArgs,
-              toolCallId: toolCall.id
-            });
-
-            const toolResult = await executeToolCall(
-              resolvedTools[toolName],
-              toolName,
-              preparedArgs.executionArgs,
-              input,
-              requestEnvironment,
-              nextMessages,
-              toolCall.id
-            );
-
-            eventQueue.push({
-              type: "tool.result",
-              name: toolName,
-              args: preparedArgs.eventArgs,
-              toolCallId: toolCall.id,
-              result: redactToolResultForEvent(toolResult)
-            });
-
-            if (isPendingHumanInputToolResult(toolName, toolResult)) {
-              stoppedForHumanInput = true;
-            }
-
-            const serializedResult = safeSerializeToolResult(toolResult);
-            const validationArtifact = parseToolValidationFailureArtifact(serializedResult);
-            if (validationArtifact) {
-              recoveryInstruction = DEFAULT_TOOL_VALIDATION_RECOVERY_INSTRUCTION;
-            }
-
-            nextMessages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: redactKnownSecretValues(serializedResult, process.env)
-            });
-          }
-
-          return {
-            state: {
-              ...state,
-              messages: nextMessages,
-              stoppedForHumanInput
-            },
-            next: {
-              control: stoppedForHumanInput ? "stop" : "continue",
-              ...(!stoppedForHumanInput && recoveryInstruction ? { transientInstruction: recoveryInstruction } : {})
-            }
-          };
-        },
-        onTextResponse: async ({ state, response, responseText }) => {
-          if (input.stream && responseText) {
-            eventQueue.push({
-              type: "message.delta",
-              text: responseText
-            });
-          }
-          pendingAssistantText = "";
-
-          return {
-            state: {
-              ...state,
-              messages: [...state.messages, response.assistantMessage],
-              finalMessage: response.assistantMessage,
-              finalText: responseText
-            }
+          const preparedArgs = parseToolCallEventArgs(toolCall);
+          yield {
+            type: "tool.call",
+            name: toolCall.function.name,
+            args: preparedArgs.eventArgs,
+            toolCallId: toolCall.id
           };
         }
-      });
+      }
 
-      const finalMessage = extractFinalMessage(result);
-      if (finalMessage) {
-        eventQueue.push({
+      if (event.type === "text_delta" && input.stream && event.delta) {
+        yield {
+          type: "message.delta",
+          text: event.delta
+        };
+      }
+
+      if (event.type === "tool_start") {
+        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        yield {
+          type: "tool.call",
+          name: event.toolCall.function.name,
+          args: preparedArgs.eventArgs,
+          toolCallId: event.toolCall.id
+        };
+      }
+
+      if (event.type === "tool_result") {
+        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        yield {
+          type: "tool.result",
+          name: event.toolCall.function.name,
+          args: preparedArgs.eventArgs,
+          toolCallId: event.toolCall.id,
+          result: redactToolResultForEvent(event.result)
+        };
+      }
+
+      if (event.type === "tool_error") {
+        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        yield {
+          type: "tool.result",
+          name: event.toolCall.function.name,
+          args: preparedArgs.eventArgs,
+          toolCallId: event.toolCall.id,
+          result: { error: event.error }
+        };
+      }
+
+      if (event.type === "completed") {
+        const content = event.result.output ?? "";
+        yield {
           type: "message.done",
-          message: finalMessage
-        });
-      } else if (!result.state.stoppedForHumanInput || result.reason !== "tool_calls_response") {
-        eventQueue.push({
-          type: "error",
-          error: createRejectedTextTerminalError(result.reason)
-        });
+          message: {
+            role: "assistant",
+            content
+          }
+        };
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown llm-runtime error";
-      eventQueue.push({
-        type: "error",
-        error: message
-      });
-    } finally {
-      restoreWorkspaceEnv();
-      if (environment) {
-        await disposeLLMEnvironment(environment).catch(() => undefined);
-      }
-      eventQueue.close();
-    }
-  })();
 
-  yield* eventQueue.iterator;
+      if (event.type === "failed") {
+        yield {
+          type: "error",
+          error: event.result.error ?? createRejectedTextTerminalError(event.result.status)
+        };
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown llm-runtime error";
+    yield {
+      type: "error",
+      error: message
+    };
+  } finally {
+    restoreWorkspaceEnv();
+    if (environment) {
+      await environment.dispose().catch(() => undefined);
+    }
+  }
 }

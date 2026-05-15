@@ -519,7 +519,7 @@ export async function collectHumanInputAnswers(
 }
 
 export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): string {
-  const lines = ["Human input response:"];
+  const lines = ["[human-input] response:"];
 
   for (const answer of answers) {
     const requestLabel = answer.requestId ? ` for request ${answer.requestId}` : "";
@@ -656,6 +656,88 @@ export function commitTurn(history: ChatMessage[], userInput: string, assistantT
       role: "assistant",
       content: assistantText
     }
+  ];
+}
+
+function createHumanInputToolArguments(request: PendingHumanInputRequest): Record<string, unknown> {
+  return {
+    type: request.type,
+    allowSkip: request.allowSkip,
+    questions: request.questions
+  };
+}
+
+export function createHumanInputAssistantMessage(request: PendingHumanInputRequest): ChatMessage {
+  return {
+    role: "assistant",
+    content: "",
+    tool_calls: [
+      {
+        id: request.requestId,
+        type: "function",
+        function: {
+          name: request.toolName,
+          arguments: JSON.stringify(createHumanInputToolArguments(request))
+        }
+      }
+    ]
+  };
+}
+
+export function commitHumanInputRequestTurn(
+  history: ChatMessage[],
+  userInput: string | null,
+  requests: PendingHumanInputRequest[]
+): ChatMessage[] {
+  return [
+    ...history,
+    ...(userInput === null ? [] : [{ role: "user" as const, content: userInput }]),
+    ...requests.map(createHumanInputAssistantMessage)
+  ];
+}
+
+export function commitAssistantResponse(history: ChatMessage[], assistantText: string): ChatMessage[] {
+  return [
+    ...history,
+    {
+      role: "assistant",
+      content: assistantText
+    }
+  ];
+}
+
+function createHumanInputAnswerPayload(answer: HumanInputAnswer): Record<string, unknown> {
+  return {
+    requestId: answer.requestId,
+    answers: Object.fromEntries(
+      answer.selections.map((selection) => [
+        selection.questionId,
+        selection.skipped ? null : selection.selectedOptions.map((option) => option.id)
+      ])
+    ),
+    selections: answer.selections
+  };
+}
+
+export function appendHumanInputAnswerMessages(
+  history: ChatMessage[],
+  requests: PendingHumanInputRequest[],
+  answers: HumanInputAnswer[]
+): ChatMessage[] {
+  const requestsById = new Map(requests.map((request) => [request.requestId, request]));
+  const answerMessages = answers.map((answer): ChatMessage => {
+    const request = requestsById.get(answer.requestId);
+    return {
+      role: "tool",
+      content: JSON.stringify(createHumanInputAnswerPayload(answer)),
+      tool_call_id: answer.requestId,
+      ...(request ? { name: request.toolName } : {})
+    };
+  });
+
+  return [
+    ...history,
+    ...answerMessages
   ];
 }
 
@@ -872,11 +954,11 @@ export function consumeAutoContinueBudget(
 export async function streamAssistantTurn(
   options: CliOptions,
   history: ChatMessage[],
-  userInput: string,
+  userInput: string | null,
   output: WritableLike,
   errorOutput: WritableLike
 ): Promise<StreamTurnResult> {
-  const messages = buildTurnMessages(history, userInput);
+  const messages = userInput === null ? history : buildTurnMessages(history, userInput);
   const response = await fetch(`${options.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -927,16 +1009,14 @@ export async function streamAssistantTurn(
         const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
         if (typeof payload?.name === "string") {
           const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
-          if (payload.name === "ask_user_question") {
-            appendHumanInputRequest(
-              humanInputRequests,
-              parseHumanInputToolCall(
-                payload.name,
-                payload.args,
-                toolCallId
-              )
-            );
-          }
+          appendHumanInputRequest(
+            humanInputRequests,
+            parseHumanInputToolCall(
+              payload.name,
+              payload.args,
+              toolCallId
+            )
+          );
           if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
             assistantDisplay.clearPending();
             errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
@@ -1047,19 +1127,26 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
       }
 
       try {
-        let nextInput = input;
+        let nextInput: string | null = input;
         let remainingAutoTurns = options.autoContinue ? options.autoContinueTurns : 0;
         let remainingWarningGraceTurns = options.autoContinue ? WARNING_AUTO_CONTINUE_GRACE_TURNS : 0;
 
         while (true) {
           const result = await streamAssistantTurn(options, history, nextInput, stdout, stderr);
-          history = commitTurn(history, nextInput, result.assistantText);
+          if (result.humanInputRequests.length > 0) {
+            history = commitHumanInputRequestTurn(history, nextInput, result.humanInputRequests);
+          } else if (nextInput === null) {
+            history = commitAssistantResponse(history, result.assistantText);
+          } else {
+            history = commitTurn(history, nextInput, result.assistantText);
+          }
           stdout.write("\n");
 
           if (result.humanInputRequests.length > 0) {
             const answers = await collectHumanInputAnswers(result.humanInputRequests, readline, stdout);
-            nextInput = formatHumanInputAnswerMessage(answers);
-            writeQueuedHumanInputFollowUp(stdout, nextInput);
+            history = appendHumanInputAnswerMessages(history, result.humanInputRequests, answers);
+            writeQueuedHumanInputFollowUp(stdout, formatHumanInputAnswerMessage(answers));
+            nextInput = null;
             continue;
           }
 

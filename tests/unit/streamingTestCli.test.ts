@@ -8,9 +8,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStreamEvent,
+  appendHumanInputAnswerMessages,
   collectHumanInputAnswers,
+  commitAssistantResponse,
+  commitHumanInputRequestTurn,
   consumeAutoContinueBudget,
   commitTurn,
+  createHumanInputAssistantMessage,
   extractSseEventBlocks,
   formatToolEventLine,
   formatHumanInputAnswerMessage,
@@ -426,7 +430,7 @@ test("collectHumanInputAnswers grays human-input request tags for TTY output", a
 test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
   const output = createWritableCapture();
   const answerMessage = [
-    "Human input response:",
+    "[human-input] response:",
     "- Answer for request call_123:",
     "  - mode (Which mode?): safe (Safe)"
   ].join("\n");
@@ -435,7 +439,7 @@ test("writeQueuedHumanInputFollowUp includes the readable answer payload", () =>
 
   assert.equal(output.text(), [
     "[human-input] queued answer follow-up:",
-    "Human input response:",
+    "[human-input] response:",
     "- Answer for request call_123:",
     "  - mode (Which mode?): safe (Safe)",
     ""
@@ -464,16 +468,6 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       }
     ]
   };
-  const pendingToolResult = {
-    ok: false,
-    pending: true,
-    status: "pending",
-    confirmed: false,
-    requestId: "call_contact_match",
-    type: "single-select",
-    allowSkip: false,
-    questions: toolArgs.questions
-  };
   const output = createWritableCapture();
   const errorOutput = createWritableCapture();
   const originalFetch = global.fetch;
@@ -485,16 +479,6 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
         type: "tool.call",
         name: "ask_user_input",
         args: toolArgs,
-        toolCallId: "call_contact_match"
-      }
-    },
-    {
-      event: "tool.result",
-      data: {
-        type: "tool.result",
-        name: "ask_user_input",
-        args: toolArgs,
-        result: pendingToolResult,
         toolCallId: "call_contact_match"
       }
     },
@@ -516,7 +500,7 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
     );
 
     assert.deepEqual(
-      parsePendingHumanInputRequest("ask_user_input", pendingToolResult, "call_contact_match"),
+      parseHumanInputToolCall("ask_user_input", toolArgs, "call_contact_match"),
       {
         toolName: "ask_user_input",
         requestId: "call_contact_match",
@@ -577,14 +561,14 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "  2. Not sure / search all [not-sure] - Search across all contacts named Jazz Gill and show matches.",
       "Select a number: 1",
       "[human-input] queued answer follow-up:",
-      "Human input response:",
+      "[human-input] response:",
       "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))",
       ""
     ].join("\n"));
 
     assert.equal(formatHumanInputAnswerMessage(answers), [
-      "Human input response:",
+      "[human-input] response:",
       "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))"
     ].join("\n"));
@@ -666,7 +650,7 @@ test("formatHumanInputAnswerMessage serializes selected ids and labels", () => {
       ]
     }
   ]), [
-    "Human input response:",
+    "[human-input] response:",
     "- Answer for request call_123:",
     "  - mode (Which mode?): safe, full (Safe, Full)",
     "  - notes (Any notes?): skipped"
@@ -702,6 +686,130 @@ test("commitTurn appends a complete user and assistant turn", () => {
       role: "assistant",
       content: "Second answer"
     }
+  ]);
+});
+
+test("createHumanInputAssistantMessage preserves the assistant tool call for runtime continuation", () => {
+  assert.deepEqual(createHumanInputAssistantMessage({
+    toolName: "ask_user_input",
+    requestId: "call_123",
+    type: "single-select",
+    allowSkip: false,
+    questions: [
+      {
+        header: "Mode",
+        id: "mode",
+        question: "Which mode?",
+        options: [
+          { id: "safe", label: "Safe" }
+        ]
+      }
+    ]
+  }), {
+    role: "assistant",
+    content: "",
+    tool_calls: [
+      {
+        id: "call_123",
+        type: "function",
+        function: {
+          name: "ask_user_input",
+          arguments: JSON.stringify({
+            type: "single-select",
+            allowSkip: false,
+            questions: [
+              {
+                header: "Mode",
+                id: "mode",
+                question: "Which mode?",
+                options: [
+                  { id: "safe", label: "Safe" }
+                ]
+              }
+            ]
+          })
+        }
+      }
+    ]
+  });
+});
+
+test("commitHumanInputRequestTurn appends the pending assistant tool call instead of a synthetic answer user turn", () => {
+  const updated = commitHumanInputRequestTurn([], "Start task", [
+    {
+      toolName: "ask_user_input",
+      requestId: "call_123",
+      type: "single-select",
+      allowSkip: false,
+      questions: [
+        {
+          header: "Mode",
+          id: "mode",
+          question: "Which mode?",
+          options: [
+            { id: "safe", label: "Safe" }
+          ]
+        }
+      ]
+    }
+  ]);
+
+  assert.equal(updated[0]?.role, "user");
+  assert.equal(updated[1]?.role, "assistant");
+  assert.equal(updated[1]?.tool_calls?.[0]?.id, "call_123");
+});
+
+test("appendHumanInputAnswerMessages appends tool messages keyed to the paused tool call", () => {
+  const updated = appendHumanInputAnswerMessages([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call_123",
+          type: "function",
+          function: {
+            name: "ask_user_input",
+            arguments: "{}"
+          }
+        }
+      ]
+    }
+  ], [
+    {
+      toolName: "ask_user_input",
+      requestId: "call_123",
+      type: "single-select",
+      allowSkip: false,
+      questions: []
+    }
+  ], [
+    {
+      requestId: "call_123",
+      selections: [
+        {
+          questionId: "mode",
+          questionText: "Which mode?",
+          skipped: false,
+          selectedOptions: [
+            { id: "safe", label: "Safe" }
+          ]
+        }
+      ]
+    }
+  ]);
+
+  assert.equal(updated.at(-1)?.role, "tool");
+  assert.equal(updated.at(-1)?.tool_call_id, "call_123");
+  assert.equal(updated.at(-1)?.name, "ask_user_input");
+});
+
+test("commitAssistantResponse appends only the resumed assistant reply", () => {
+  assert.deepEqual(commitAssistantResponse([
+    { role: "assistant", content: "", tool_calls: [] }
+  ], "Done"), [
+    { role: "assistant", content: "", tool_calls: [] },
+    { role: "assistant", content: "Done" }
   ]);
 });
 

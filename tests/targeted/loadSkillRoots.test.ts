@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createLLMEnvironment, disposeLLMEnvironment, resolveToolsAsync } from "llm-runtime";
+import { createRuntime, resolveToolsAsync } from "llm-runtime";
 import type { EnvConfig } from "../../src/config/env.js";
 import { createBuiltInSelection, createEnvironmentOptions } from "../../src/runtime/runtimeConfig.js";
 
@@ -32,7 +32,7 @@ test("load_skill resolves a skill from .agents/skills", async () => {
     "Use this skill to resolve API records from the hidden workspace skill root."
   ].join("\n"));
 
-  const environment = createLLMEnvironment(createEnvironmentOptions(baseEnv, workspaceRoot));
+  const environment = createRuntime(createEnvironmentOptions(baseEnv, workspaceRoot));
 
   try {
     const tools = await resolveToolsAsync({
@@ -50,7 +50,7 @@ test("load_skill resolves a skill from .agents/skills", async () => {
     assert.match(normalizedResult, /<description>Resolve API lookups\.<\/description>/);
     assert.match(normalizedResult, /<skill_root>.*\/.agents\/skills\/api-lookup<\/skill_root>/);
   } finally {
-    await disposeLLMEnvironment(environment).catch(() => undefined);
+    await environment.dispose().catch(() => undefined);
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });

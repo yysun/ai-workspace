@@ -210,6 +210,7 @@ function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {
     role: message.role,
     content: message.content,
     ...(message.name ? { name: message.name } : {}),
+    ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
     ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {})
   }));
 }
