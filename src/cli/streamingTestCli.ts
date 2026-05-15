@@ -169,18 +169,35 @@ function readTrimmedString(record: Record<string, unknown>, fieldName: string): 
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+export function sanitizeHumanInputDisplayText(value: string): string {
+  return value
+    .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function readSanitizedHumanInputString(record: Record<string, unknown>, fieldName: string): string | null {
+  const value = readTrimmedString(record, fieldName);
+  if (!value) {
+    return null;
+  }
+
+  const sanitized = sanitizeHumanInputDisplayText(value);
+  return sanitized || null;
+}
+
 function parseHumanInputOption(value: unknown): HumanInputOption | null {
   if (!isRecord(value)) {
     return null;
   }
 
   const id = readTrimmedString(value, "id");
-  const label = readTrimmedString(value, "label");
+  const label = readSanitizedHumanInputString(value, "label");
   if (!id || !label) {
     return null;
   }
 
-  const description = readTrimmedString(value, "description");
+  const description = readSanitizedHumanInputString(value, "description");
   return {
     id,
     label,
@@ -193,9 +210,9 @@ function parseHumanInputQuestion(value: unknown): HumanInputQuestion | null {
     return null;
   }
 
-  const header = readTrimmedString(value, "header");
+  const header = readSanitizedHumanInputString(value, "header");
   const id = readTrimmedString(value, "id");
-  const question = readTrimmedString(value, "question");
+  const question = readSanitizedHumanInputString(value, "question");
   if (!header || !id || !question || !Array.isArray(value.options)) {
     return null;
   }
@@ -380,8 +397,8 @@ function writeHumanInputQuestion(
 
 function createHumanInputPrompt(request: PendingHumanInputRequest): string {
   const selectionHint = request.type === "multiple-select"
-    ? "Select option numbers or ids separated by commas"
-    : "Select an option number or id";
+    ? "Select numbers separated by commas"
+    : "Select a number";
   const skipHint = request.allowSkip ? ", or press Enter to skip" : "";
   return `${selectionHint}${skipHint}: `;
 }
@@ -455,27 +472,43 @@ export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): stri
 function formatShellCommandArgs(args: Record<string, unknown>): string {
   if (typeof args.command !== "string") {
     const serializedArgs = stringifyForDisplay(args);
-    return serializedArgs ? ` args=${serializedArgs}` : "";
+    return serializedArgs ? `\n  args: ${serializedArgs}` : "";
   }
 
   const parameters = Array.isArray(args.parameters)
     ? args.parameters.filter((parameter): parameter is string => typeof parameter === "string")
     : [];
   const parts = [
-    `command=${JSON.stringify(args.command)}`,
-    `args=${JSON.stringify(parameters)}`
+    `command: ${JSON.stringify(args.command)}`,
+    `args: ${JSON.stringify(parameters)}`
   ];
 
   for (const optionalField of ["directory", "timeout", "output_format", "output_detail"]) {
     if (args[optionalField] !== undefined) {
       const serializedValue = stringifyForDisplay(args[optionalField]);
       if (serializedValue) {
-        parts.push(`${optionalField}=${serializedValue}`);
+        parts.push(`${optionalField}: ${serializedValue}`);
       }
     }
   }
 
-  return ` ${parts.join(" ")}`;
+  return `\n  ${parts.join("\n  ")}`;
+}
+
+function formatGenericToolArgs(args: Record<string, unknown>): string {
+  const entries = Object.entries(args);
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const parts = entries
+    .map(([key, value]) => {
+      const serializedValue = stringifyForDisplay(value);
+      return serializedValue ? `  ${key}: ${serializedValue}` : null;
+    })
+    .filter((part): part is string => part !== null);
+
+  return parts.length > 0 ? `\n${parts.join("\n")}` : "";
 }
 
 export function formatToolArgsForDisplay(toolName: string, args: unknown): string {
@@ -487,8 +520,7 @@ export function formatToolArgsForDisplay(toolName: string, args: unknown): strin
     return formatShellCommandArgs(args);
   }
 
-  const serializedArgs = stringifyForDisplay(args);
-  return serializedArgs ? ` args=${serializedArgs}` : "";
+  return formatGenericToolArgs(args);
 }
 
 export function formatToolEventLine(kind: "tool.call" | "tool.result", name: string, args: unknown): string {

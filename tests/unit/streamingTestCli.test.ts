@@ -16,6 +16,7 @@ import {
   formatHumanInputAnswerMessage,
   isReadlineExitError,
   parseSseEventBlock,
+  sanitizeHumanInputDisplayText,
   parseHumanInputSelection,
   parseHumanInputToolCall,
   parsePendingHumanInputRequest,
@@ -191,14 +192,27 @@ test("formatToolEventLine prints shell command and parameters", () => {
       directory: "tools",
       output_format: "json"
     }),
-    "\n[tool.result] shell_cmd command=\"curl\" args=[\"-sS\",\"-H\",\"Authorization: Bearer [redacted:$API_ACCESS_TOKEN]\",\"https://api.example.test/records\",\"--fail\"] directory=\"tools\" output_format=\"json\"\n"
+    [
+      "",
+      "[tool.result] shell_cmd",
+      "  command: \"curl\"",
+      "  args: [\"-sS\",\"-H\",\"Authorization: Bearer [redacted:$API_ACCESS_TOKEN]\",\"https://api.example.test/records\",\"--fail\"]",
+      "  directory: \"tools\"",
+      "  output_format: \"json\"",
+      ""
+    ].join("\n")
   );
 });
 
 test("formatToolEventLine prints generic tool arguments as JSON", () => {
   assert.equal(
     formatToolEventLine("tool.call", "web_fetch", { url: "https://example.test" }),
-    "\n[tool.call] web_fetch args={\"url\":\"https://example.test\"}\n"
+    [
+      "",
+      "[tool.call] web_fetch",
+      "  url: \"https://example.test\"",
+      ""
+    ].join("\n")
   );
 });
 
@@ -267,6 +281,21 @@ test("parseHumanInputToolCall accepts ask_user_question as a local alias", () =>
   assert.equal(request?.questions[0]?.id, "next-step");
 });
 
+test("sanitizeHumanInputDisplayText removes emoji from rendered prompts", () => {
+  assert.equal(
+    sanitizeHumanInputDisplayText("✅ Contact Match"),
+    "Contact Match"
+  );
+  assert.equal(
+    sanitizeHumanInputDisplayText("🎯 Which Jazz Gill are you looking for?"),
+    "Which Jazz Gill are you looking for?"
+  );
+  assert.equal(
+    sanitizeHumanInputDisplayText("📄 Jazz Gill (Contact ID 123)"),
+    "Jazz Gill (Contact ID 123)"
+  );
+});
+
 test("shouldSuppressHumanInputToolEventLine hides structured human-input tool events", () => {
   assert.equal(shouldSuppressHumanInputToolEventLine("tool.call", "ask_user_question", {
     type: "single-select",
@@ -308,19 +337,19 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
   const toolArgs = {
     questions: [
       {
-        header: "Contact Match",
+        header: "✅ Contact Match",
         id: "contact_match",
-        question: "Which Jazz Gill are you looking for?",
+        question: "🎯 Which Jazz Gill are you looking for?",
         options: [
           {
             id: "jazz-gill-1",
-            label: "Jazz Gill (Contact ID 123)",
-            description: "If this is the primary Jazz Gill you want to analyze."
+            label: "📄 Jazz Gill (Contact ID 123)",
+            description: "✅ If this is the primary Jazz Gill you want to analyze."
           },
           {
             id: "not-sure",
-            label: "Not sure / search all",
-            description: "Search across all contacts named Jazz Gill and show matches."
+            label: "🤷 Not sure / search all",
+            description: "🔎 Search across all contacts named Jazz Gill and show matches."
           }
         ]
       }
@@ -369,7 +398,12 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
   try {
     assert.equal(
       formatToolEventLine("tool.call", "ask_user_input", toolArgs),
-      "\n[tool.call] ask_user_input args={\"questions\":[{\"header\":\"Contact Match\",\"id\":\"contact_match\",\"question\":\"Which Jazz Gill are you looking for?\",\"options\":[{\"id\":\"jazz-gill-1\",\"label\":\"Jazz Gill (Contact ID 123)\",\"description\":\"If this is the primary Jazz Gill you want to analyze.\"},{\"id\":\"not-sure\",\"label\":\"Not sure / search all\",\"description\":\"Search across all contacts named Jazz Gill and show matches.\"}]}]}\n"
+      [
+        "",
+        "[tool.call] ask_user_input",
+        "  questions: [{\"header\":\"✅ Contact Match\",\"id\":\"contact_match\",\"question\":\"🎯 Which Jazz Gill are you looking for?\",\"options\":[{\"id\":\"jazz-gill-1\",\"label\":\"📄 Jazz Gill (Contact ID 123)\",\"description\":\"✅ If this is the primary Jazz Gill you want to analyze.\"},{\"id\":\"not-sure\",\"label\":\"🤷 Not sure / search all\",\"description\":\"🔎 Search across all contacts named Jazz Gill and show matches.\"}]}]",
+        ""
+      ].join("\n")
     );
 
     assert.deepEqual(
@@ -379,7 +413,25 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
         requestId: "call_contact_match",
         type: "single-select",
         allowSkip: false,
-        questions: toolArgs.questions
+        questions: [
+          {
+            header: "Contact Match",
+            id: "contact_match",
+            question: "Which Jazz Gill are you looking for?",
+            options: [
+              {
+                id: "jazz-gill-1",
+                label: "Jazz Gill (Contact ID 123)",
+                description: "If this is the primary Jazz Gill you want to analyze."
+              },
+              {
+                id: "not-sure",
+                label: "Not sure / search all",
+                description: "Search across all contacts named Jazz Gill and show matches."
+              }
+            ]
+          }
+        ]
       }
     );
 
@@ -415,7 +467,7 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "Which Jazz Gill are you looking for?",
       "  1. Jazz Gill (Contact ID 123) [jazz-gill-1] - If this is the primary Jazz Gill you want to analyze.",
       "  2. Not sure / search all [not-sure] - Search across all contacts named Jazz Gill and show matches.",
-      "Select an option number or id: 1",
+      "Select a number: 1",
       "[human-input] queued answer follow-up",
       ""
     ].join("\n"));
