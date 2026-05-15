@@ -1,7 +1,7 @@
 /*
  * Feature: unit coverage for the streaming test CLI helpers.
- * Notes: verifies SSE frame parsing, runtime event assembly, and in-memory history updates without depending on interactive terminal IO.
- * Recent changes: added coverage for structured human-input tool call handling.
+ * Notes: verifies SSE frame parsing, runtime event assembly, compact tool trace rendering, and in-memory history updates without depending on interactive terminal IO.
+ * Recent changes: added coverage for compact, verbose, and debug trace modes plus human-input checkpoint rendering.
  */
 
 import assert from "node:assert/strict";
@@ -16,7 +16,9 @@ import {
   commitTurn,
   createHumanInputAssistantMessage,
   extractSseEventBlocks,
+  formatHumanInputCheckpoint,
   formatToolEventLine,
+  formatToolResultEventLine,
   formatHumanInputAnswerMessage,
   isReadlineExitError,
   parseSseEventBlock,
@@ -85,8 +87,14 @@ test("resolveCliOptions derives baseUrl and model from args and env", () => {
     model: "anthropic:claude",
     autoContinue: true,
     autoContinueMessage: "keep going",
-    autoContinueTurns: 2
+    autoContinueTurns: 2,
+    traceMode: "default"
   });
+});
+
+test("resolveCliOptions maps verbose and debug flags to trace modes", () => {
+  assert.equal(resolveCliOptions(["--verbose"], {}).traceMode, "verbose");
+  assert.equal(resolveCliOptions(["--verbose", "--debug"], {}).traceMode, "debug");
 });
 
 test("resolveCliOptions falls back to default auto-continue settings", () => {
@@ -99,7 +107,8 @@ test("resolveCliOptions falls back to default auto-continue settings", () => {
     model: "default",
     autoContinue: false,
     autoContinueMessage: "go ahead",
-    autoContinueTurns: 1
+    autoContinueTurns: 1,
+    traceMode: "default"
   });
 });
 
@@ -231,7 +240,8 @@ test("streamAssistantTurn writes streamed assistant text without a prompt label"
       model: "default",
       autoContinue: false,
       autoContinueMessage: "go ahead",
-      autoContinueTurns: 1
+      autoContinueTurns: 1,
+      traceMode: "default"
     }, [], "say hello", output.output, errorOutput.output);
 
     assert.equal(turnResult.assistantText, "hello");
@@ -245,36 +255,258 @@ test("streamAssistantTurn writes streamed assistant text without a prompt label"
   }
 });
 
-test("formatToolEventLine prints shell command and parameters", () => {
+test("formatToolEventLine renders a compact shell command trace by default", () => {
   assert.equal(
-    formatToolEventLine("tool.result", "shell_cmd", {
-      command: "curl",
-      parameters: ["-sS", "-H", "Authorization: Bearer [redacted:$API_ACCESS_TOKEN]", "https://api.example.test/records", "--fail"],
-      directory: "tools",
-      output_format: "json"
+    formatToolEventLine("tool.call", "shell_cmd", {
+      command: "python",
+      parameters: ["-c", "print('hello from a long inline script that should be collapsed for readability')"]
     }),
     [
       "",
-      "[tool.result] shell_cmd",
+      "  ↳ shell_cmd python -c \"...\""
+    ].join("\n")
+  );
+});
+
+test("formatToolEventLine renders a compact generic tool summary by default", () => {
+  assert.equal(
+    formatToolEventLine("tool.call", "web_fetch", { url: "https://example.test" }),
+    [
+      "",
+      "  ↳ web_fetch https://example.test"
+    ].join("\n")
+  );
+});
+
+test("formatToolEventLine renders verbose tool details without raw dumping", () => {
+  assert.equal(
+    formatToolEventLine("tool.call", "search_files", { query: "**/*marp*" }, "verbose"),
+    [
+      "",
+      "  ↳ search_files **/*marp*",
+      "    args: {\"query\":\"**/*marp*\"}"
+    ].join("\n")
+  );
+});
+
+test("formatToolEventLine preserves raw event output in debug mode", () => {
+  assert.equal(
+    formatToolEventLine("tool.call", "shell_cmd", {
+      command: "curl",
+      parameters: ["-sS", "https://example.test"],
+      output_format: "json"
+    }, "debug"),
+    [
+      "",
+      "[tool.call] shell_cmd",
       "  command: \"curl\"",
-      "  args: [\"-sS\",\"-H\",\"Authorization: Bearer [redacted:$API_ACCESS_TOKEN]\",\"https://api.example.test/records\",\"--fail\"]",
-      "  directory: \"tools\"",
-      "  output_format: \"json\"",
+      "  args: [\"-sS\",\"https://example.test\"]",
+      "  output_format: \"json\""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes shell command results with preview lines", () => {
+  assert.equal(
+    formatToolResultEventLine("shell_cmd", JSON.stringify({
+      exit_code: 0,
+      stdout: "saved\n",
+      stderr: "",
+      aborted: false,
+      timed_out: false,
+      duration_ms: 123,
+      signal: null
+    })),
+    [
+      "",
+      "  ✓ 123ms · stdout 1 line",
+      "    saved",
       ""
     ].join("\n")
   );
 });
 
-test("formatToolEventLine prints generic tool arguments as JSON", () => {
+test("formatToolResultEventLine keeps raw output in debug mode", () => {
   assert.equal(
-    formatToolEventLine("tool.call", "web_fetch", { url: "https://example.test" }),
+    formatToolResultEventLine("shell_cmd", JSON.stringify({
+      exit_code: 1,
+      stderr: "file not found: process/api.yaml\n",
+      duration_ms: 11
+    }), "debug"),
     [
       "",
-      "[tool.call] web_fetch",
-      "  url: \"https://example.test\"",
+      "[tool.result] shell_cmd",
+      "  exit_code: 1",
+      "  stderr: \"file not found: process/api.yaml\\n\"",
+      "  duration_ms: 11",
       ""
     ].join("\n")
   );
+});
+
+test("formatToolResultEventLine omits brace-only lines from structured previews", () => {
+  assert.equal(
+    formatToolResultEventLine("path_exists", [
+      "{",
+      '  "path": "/Users/esun/Documents/Projects/crm-ai-workspace/.env",',
+      '  "exists": true,',
+      '  "checked": true,',
+      '  "kind": "file",',
+      '  "scope": "workspace"',
+      "}"
+    ].join("\n")),
+    [
+      "",
+      "  ✓ 7 lines",
+      "    \"path\": \"/Users/esun/Documents/Projects/crm-ai-workspace/.env\",",
+      "    \"exists\": true,",
+      "    \"checked\": true,",
+      ""
+    ].join("\n")
+  );
+});
+
+test("streamAssistantTurn writes tool results using returned payloads", async () => {
+  const output = createWritableCapture();
+  const errorOutput = createWritableCapture();
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "shell_cmd",
+        args: {
+          command: "bash",
+          parameters: ["-lc", "echo saved"],
+          output_format: "json",
+          output_detail: "minimal"
+        },
+        toolCallId: "call_1"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "shell_cmd",
+        args: {
+          command: "bash",
+          parameters: ["-lc", "echo saved"],
+          output_format: "json",
+          output_detail: "minimal"
+        },
+        result: JSON.stringify({
+          exit_code: 0,
+          stdout: "saved\n",
+          stderr: "",
+          aborted: false,
+          timed_out: false,
+          duration_ms: 12,
+          signal: null
+        }),
+        toolCallId: "call_1"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    const turnResult = await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", output.output, errorOutput.output);
+
+    assert.equal(turnResult.assistantText, "done");
+    assert.match(errorOutput.text(), /↳ shell_cmd bash -lc "echo saved"/);
+    assert.match(errorOutput.text(), /✓ 12ms · stdout 1 line/);
+    assert.match(errorOutput.text(), /saved/);
+    assert.doesNotMatch(errorOutput.text(), /\[tool\.result\] shell_cmd/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", async () => {
+  const sharedTerminal = createWritableCapture(true);
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "read_file",
+        args: {
+          filePath: "data/contacts/4539/2026/05/09/insight.md"
+        },
+        toolCallId: "call_1"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "read_file",
+        result: "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\n",
+        toolCallId: "call_1"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
+
+    assert.match(
+      sharedTerminal.text(),
+      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ 7 lines/u
+    );
+    assert.doesNotMatch(
+      sharedTerminal.text(),
+      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ 7 lines/u
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("parsePendingHumanInputRequest reads ask_user_input pending artifacts", () => {
@@ -394,7 +626,37 @@ test("shouldSuppressHumanInputToolEventLine hides structured human-input tool ev
   }), false);
 });
 
-test("collectHumanInputAnswers grays human-input request tags for TTY output", async () => {
+test("formatHumanInputCheckpoint renders a user checkpoint instead of a tool trace", () => {
+  assert.equal(
+    formatHumanInputCheckpoint({
+      toolName: "ask_user_input",
+      requestId: "call_123",
+      type: "single-select",
+      allowSkip: false,
+      questions: []
+    }, {
+      header: "Entity Type",
+      id: "entity-type",
+      question: "What type of record are you looking for?",
+      options: [
+        { id: "contact", label: "Contact" },
+        { id: "account", label: "Account" },
+        { id: "unknown", label: "Not sure" }
+      ]
+    }),
+    [
+      "assistant needs input:",
+      "  What type of record are you looking for?",
+      "",
+      "  1. Contact",
+      "  2. Account",
+      "  3. Not sure",
+      ""
+    ].join("\n")
+  );
+});
+
+test("collectHumanInputAnswers writes a readable user checkpoint", async () => {
   const output = createWritableCapture(true);
   const answers = await collectHumanInputAnswers([
     {
@@ -424,7 +686,8 @@ test("collectHumanInputAnswers grays human-input request tags for TTY output", a
   assert.deepEqual(answers[0]?.selections[0]?.selectedOptions, [
     { id: "jazz-gill-1", label: "Jazz Gill" }
   ]);
-  assert.match(output.text(), /\u001b\[90m\[ask_user_input\]\u001b\[0m Contact Match/);
+  assert.match(output.text(), /^\nassistant needs input:/);
+  assert.match(output.text(), /Which contact\?/);
 });
 
 test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
@@ -490,11 +753,35 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
 
   try {
     assert.equal(
-      formatToolEventLine("tool.call", "ask_user_input", toolArgs),
+      formatHumanInputCheckpoint({
+        toolName: "ask_user_input",
+        requestId: "call_contact_match",
+        type: "single-select",
+        allowSkip: false,
+        questions: []
+      }, {
+        header: "Contact Match",
+        id: "contact_match",
+        question: "Which Jazz Gill are you looking for?",
+        options: [
+          {
+            id: "jazz-gill-1",
+            label: "Jazz Gill (Contact ID 123)",
+            description: "If this is the primary Jazz Gill you want to analyze."
+          },
+          {
+            id: "not-sure",
+            label: "Not sure / search all",
+            description: "Search across all contacts named Jazz Gill and show matches."
+          }
+        ]
+      }),
       [
+        "assistant needs input:",
+        "  Which Jazz Gill are you looking for?",
         "",
-        "[tool.call] ask_user_input",
-        "  questions: [{\"header\":\"✅ Contact Match\",\"id\":\"contact_match\",\"question\":\"🎯 Which Jazz Gill are you looking for?\",\"options\":[{\"id\":\"jazz-gill-1\",\"label\":\"📄 Jazz Gill (Contact ID 123)\",\"description\":\"✅ If this is the primary Jazz Gill you want to analyze.\"},{\"id\":\"not-sure\",\"label\":\"🤷 Not sure / search all\",\"description\":\"🔎 Search across all contacts named Jazz Gill and show matches.\"}]}]",
+        "  1. Jazz Gill (Contact ID 123)",
+        "  2. Not sure / search all",
         ""
       ].join("\n")
     );
@@ -533,7 +820,8 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       model: "default",
       autoContinue: false,
       autoContinueMessage: "go ahead",
-      autoContinueTurns: 1
+      autoContinueTurns: 1,
+      traceMode: "default"
     }, [], "find contact Jazz Gill", output.output, errorOutput.output);
 
     output.output.write("\n");
@@ -555,11 +843,12 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
     assert.equal(output.text(), [
       "",
       "",
-      "[ask_user_input] Contact Match",
-      "Which Jazz Gill are you looking for?",
-      "  1. Jazz Gill (Contact ID 123) [jazz-gill-1] - If this is the primary Jazz Gill you want to analyze.",
-      "  2. Not sure / search all [not-sure] - Search across all contacts named Jazz Gill and show matches.",
-      "Select a number: 1",
+      "assistant needs input:",
+      "  Which Jazz Gill are you looking for?",
+      "",
+      "  1. Jazz Gill (Contact ID 123)",
+      "  2. Not sure / search all",
+      "Select a number or option id: 1",
       "[human-input] queued answer follow-up:",
       "[human-input] response:",
       "- Answer for request call_contact_match:",

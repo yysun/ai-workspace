@@ -111,7 +111,16 @@ Auto-continue one or more follow-up turns with a synthetic user message such as 
 npm run chat:cli -- --auto-continue --auto-continue-message "go ahead" --auto-continue-turns 1
 ```
 
+Switch the tool trace renderer when you need more or less detail:
+
+```bash
+npm run chat:cli -- --verbose
+npm run chat:cli -- --debug
+```
+
 The CLI sends `stream: true` requests to `/chat/completions`, prints assistant output as SSE deltas arrive, and keeps the full conversation in memory for the life of the process. Tool-call, tool-result, and warning lines are shown in gray in TTY terminals. Use `/clear` to reset history and `/exit` to quit.
+
+By default, tool activity is rendered as a compact indented trace so assistant text remains easy to follow. `--verbose` expands the trace with bounded args and raw payload previews, while `--debug` restores raw-style tool event dumps for runtime troubleshooting.
 
 When the runtime asks for structured human input through `ask_user_input`, `human_intervention_request`, or the local compatibility alias `ask_user_question`, the CLI renders the available choices in the terminal. Prompts are shown as numbered choices so the user can usually reply with a single number; for multiple-select prompts, enter numbers separated by commas. Skippable prompts allow an empty answer. Option ids are still accepted for compatibility, and displayed human-input text is sanitized to avoid emoji-heavy prompts in the terminal. The CLI sends the selected ids and labels back as the next user turn so the local test conversation can continue.
 

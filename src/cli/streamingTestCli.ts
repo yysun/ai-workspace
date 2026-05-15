@@ -1,12 +1,23 @@
 /*
  * Feature: interactive streaming test CLI for ai-workspace.
  * Notes: posts streaming chat requests to the local server, renders SSE deltas live, and keeps chat history in memory per process.
- * Recent changes: added structured human-input tool handling for interactive CLI turns.
+ * Recent changes: added compact tool-trace modes and human-input checkpoint rendering for interactive CLI turns.
  */
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import type { ChatMessage } from "../runtime/runtimeTypes.js";
+import {
+  formatToolEventLine,
+  formatToolResultEventLine,
+  type TraceMode,
+  renderToolCall,
+  renderToolResult,
+  summarizeToolCall,
+  summarizeToolResult,
+  type ToolCallView,
+  type ToolResultView
+} from "./toolTraceRenderer.js";
 
 export type CliOptions = {
   baseUrl: string;
@@ -14,6 +25,22 @@ export type CliOptions = {
   autoContinue: boolean;
   autoContinueMessage: string;
   autoContinueTurns: number;
+  traceMode: TraceMode;
+};
+
+export {
+  formatToolEventLine,
+  formatToolResultEventLine,
+  renderToolCall,
+  renderToolResult,
+  summarizeToolCall,
+  summarizeToolResult
+};
+
+export type {
+  TraceMode,
+  ToolCallView,
+  ToolResultView
 };
 
 export type ParsedSseEvent = {
@@ -118,6 +145,18 @@ function readBooleanFlag(args: string[], flagName: string): boolean {
   return args.includes(flagName);
 }
 
+function resolveTraceMode(args: string[]): TraceMode {
+  if (readBooleanFlag(args, "--debug")) {
+    return "debug";
+  }
+
+  if (readBooleanFlag(args, "--verbose")) {
+    return "verbose";
+  }
+
+  return "default";
+}
+
 function isTruthy(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value?.trim() ?? "");
 }
@@ -212,14 +251,6 @@ function createAssistantPendingDisplay(output: WritableLike): {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringifyForDisplay(value: unknown): string | null {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
 }
 
 function parseJsonRecord(value: unknown): Record<string, unknown> | null {
@@ -456,24 +487,35 @@ export function parseHumanInputSelection(
   };
 }
 
+export function formatHumanInputCheckpoint(
+  request: PendingHumanInputRequest,
+  question: HumanInputQuestion
+): string {
+  const lines = ["assistant needs input:", `  ${question.question}`, ""];
+
+  question.options.forEach((option, index) => {
+    lines.push(`  ${index + 1}. ${option.label}`);
+  });
+
+  if (request.allowSkip) {
+    lines.push("", "  Press Enter to skip.");
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 function writeHumanInputQuestion(
   output: WritableLike,
   request: PendingHumanInputRequest,
   question: HumanInputQuestion
 ): void {
-  output.write(`\n${formatGray(`[${request.toolName}]`, output)} ${question.header}\n`);
-  output.write(`${question.question}\n`);
-
-  question.options.forEach((option, index) => {
-    const description = option.description ? ` - ${option.description}` : "";
-    output.write(`  ${index + 1}. ${option.label} [${option.id}]${description}\n`);
-  });
+  output.write(`\n${formatHumanInputCheckpoint(request, question)}`);
 }
 
 function createHumanInputPrompt(request: PendingHumanInputRequest): string {
   const selectionHint = request.type === "multiple-select"
-    ? "Select numbers separated by commas"
-    : "Select a number";
+    ? "Select numbers or option ids separated by commas"
+    : "Select a number or option id";
   const skipHint = request.allowSkip ? ", or press Enter to skip" : "";
   return `${selectionHint}${skipHint}: `;
 }
@@ -549,124 +591,6 @@ export function writeQueuedHumanInputFollowUp(output: WritableLike, answerMessag
   output.write(`${answerMessage}\n`);
 }
 
-function formatShellCommandArgs(args: Record<string, unknown>): string {
-  if (typeof args.command !== "string") {
-    const serializedArgs = stringifyForDisplay(args);
-    return serializedArgs ? `\n  args: ${serializedArgs}` : "";
-  }
-
-  const parameters = Array.isArray(args.parameters)
-    ? args.parameters.filter((parameter): parameter is string => typeof parameter === "string")
-    : [];
-  const parts = [
-    `command: ${JSON.stringify(args.command)}`,
-    `args: ${JSON.stringify(parameters)}`
-  ];
-
-  for (const optionalField of ["directory", "timeout", "output_format", "output_detail"]) {
-    if (args[optionalField] !== undefined) {
-      const serializedValue = stringifyForDisplay(args[optionalField]);
-      if (serializedValue) {
-        parts.push(`${optionalField}: ${serializedValue}`);
-      }
-    }
-  }
-
-  return `\n  ${parts.join("\n  ")}`;
-}
-
-function formatGenericToolArgs(args: Record<string, unknown>): string {
-  const entries = Object.entries(args);
-  if (entries.length === 0) {
-    return "";
-  }
-
-  const parts = entries
-    .map(([key, value]) => {
-      const serializedValue = stringifyForDisplay(value);
-      return serializedValue ? `  ${key}: ${serializedValue}` : null;
-    })
-    .filter((part): part is string => part !== null);
-
-  return parts.length > 0 ? `\n${parts.join("\n")}` : "";
-}
-
-function formatMultilineStringPreview(label: string, value: string, maxLength = 400): string {
-  const preview = value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
-  return `  ${label}: ${JSON.stringify(preview)}`;
-}
-
-function formatShellCommandResult(result: unknown): string {
-  const parsedResult = parseJsonRecord(result);
-  if (!parsedResult) {
-    if (typeof result === "string") {
-      return `\n${formatMultilineStringPreview("result", result)}`;
-    }
-
-    return formatGenericToolArgs({ result: result ?? null });
-  }
-
-  const lines: string[] = [];
-  for (const field of ["exit_code", "aborted", "timed_out", "duration_ms", "signal"]) {
-    if (parsedResult[field] !== undefined) {
-      const serializedValue = stringifyForDisplay(parsedResult[field]);
-      if (serializedValue) {
-        lines.push(`  ${field}: ${serializedValue}`);
-      }
-    }
-  }
-
-  if (typeof parsedResult.stdout === "string") {
-    lines.push(formatMultilineStringPreview("stdout", parsedResult.stdout));
-  }
-
-  if (typeof parsedResult.stderr === "string" && parsedResult.stderr) {
-    lines.push(formatMultilineStringPreview("stderr", parsedResult.stderr));
-  }
-
-  return lines.length > 0 ? `\n${lines.join("\n")}` : "";
-}
-
-function formatGenericToolResult(result: unknown): string {
-  if (isRecord(result)) {
-    return formatGenericToolArgs(result);
-  }
-
-  if (typeof result === "string") {
-    return `\n${formatMultilineStringPreview("result", result)}`;
-  }
-
-  return formatGenericToolArgs({ result: result ?? null });
-}
-
-export function formatToolArgsForDisplay(toolName: string, args: unknown): string {
-  if (!isRecord(args)) {
-    return "";
-  }
-
-  if (toolName === "shell_cmd") {
-    return formatShellCommandArgs(args);
-  }
-
-  return formatGenericToolArgs(args);
-}
-
-export function formatToolResultForDisplay(toolName: string, result: unknown): string {
-  if (toolName === "shell_cmd") {
-    return formatShellCommandResult(result);
-  }
-
-  return formatGenericToolResult(result);
-}
-
-export function formatToolEventLine(kind: "tool.call" | "tool.result", name: string, args: unknown): string {
-  return `\n[${kind}] ${name}${formatToolArgsForDisplay(name, args)}\n`;
-}
-
-export function formatToolResultEventLine(name: string, result: unknown): string {
-  return `\n[tool.result] ${name}${formatToolResultForDisplay(name, result)}\n`;
-}
-
 export function isReadlineExitError(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
@@ -691,7 +615,8 @@ export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOp
     model: rawModel.trim() || "default",
     autoContinue: readBooleanFlag(args, "--auto-continue") || isTruthy(env.AI_WORKSPACE_AUTO_CONTINUE),
     autoContinueMessage: rawAutoContinueMessage.trim() || "go ahead",
-    autoContinueTurns
+    autoContinueTurns,
+    traceMode: resolveTraceMode(args)
   };
 }
 
@@ -1079,8 +1004,10 @@ export async function streamAssistantTurn(
           );
           if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
             assistantDisplay.clearPending();
-            errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
-            assistantDisplay.resumeAfterInterruption(progress.assistantText);
+            errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args, options.traceMode), errorOutput)}`);
+            if (progress.assistantText) {
+              assistantDisplay.resumeAfterInterruption(progress.assistantText);
+            }
           }
         }
       }
@@ -1100,8 +1027,10 @@ export async function streamAssistantTurn(
           );
           if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
             assistantDisplay.clearPending();
-            errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result), errorOutput)}`);
-            assistantDisplay.resumeAfterInterruption(progress.assistantText);
+            errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result, options.traceMode), errorOutput)}`);
+            if (progress.assistantText) {
+              assistantDisplay.resumeAfterInterruption(progress.assistantText);
+            }
           }
         }
       }
