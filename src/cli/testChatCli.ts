@@ -1,0 +1,12 @@
+/*
+ * Feature: executable entrypoint for the ai-workspace streaming test CLI.
+ * Notes: delegates to the reusable CLI implementation so the entrypoint stays tiny and build-friendly.
+ * Recent changes: added a developer-facing command for interactive streamed chat testing.
+ */
+
+import { runStreamingTestCli } from "./streamingTestCli.js";
+
+void runStreamingTestCli().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

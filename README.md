@@ -91,6 +91,30 @@ npm run test:e2e
 
 The repository also includes manual HTTP request examples under `tests/http/` for quick local checks.
 
+## Interactive test CLI
+
+For repeated streaming checks, run the local interactive CLI in a separate terminal while the server is running:
+
+```bash
+npm run chat:cli
+```
+
+Optional overrides:
+
+```bash
+npm run chat:cli -- --url http://localhost:3000 --model default
+```
+
+Auto-continue one or more follow-up turns with a synthetic user message such as `go ahead`:
+
+```bash
+npm run chat:cli -- --auto-continue --auto-continue-message "go ahead" --auto-continue-turns 1
+```
+
+The CLI sends `stream: true` requests to `/chat/completions`, prints assistant output as SSE deltas arrive, and keeps the full conversation in memory for the life of the process. Tool-call and tool-result lines are shown in gray in TTY terminals. Use `/clear` to reset history and `/exit` to quit.
+
+When `--auto-continue` is enabled, the CLI can automatically submit a bounded follow-up message after a planning-style assistant reply that says things like `I will ...` or asks to proceed. This is useful for quick experiments, but it stays opt-in because it can otherwise mask places where the model should have called a tool directly.
+
 ## Mount a workspace
 
 Default workspace root:
