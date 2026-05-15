@@ -23,18 +23,19 @@ import {
   resolveCliOptions,
   shouldSuppressHumanInputToolEventLine,
   shouldAutoContinue,
-  streamAssistantTurn
+  streamAssistantTurn,
+  writeQueuedHumanInputFollowUp
 } from "../../src/cli/streamingTestCli.js";
 
-function createWritableCapture(): {
-  output: { isTTY: false; write: (chunk: string) => boolean };
+function createWritableCapture(isTTY = false): {
+  output: { isTTY: boolean; write: (chunk: string) => boolean };
   text: () => string;
 } {
   let value = "";
 
   return {
     output: {
-      isTTY: false,
+      isTTY,
       write(chunk: string) {
         value += chunk;
         return true;
@@ -182,6 +183,62 @@ test("applyStreamEvent collects runtime warning messages", () => {
   assert.deepEqual(updated.warningMessages, [
     "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn."
   ]);
+});
+
+test("streamAssistantTurn writes streamed assistant text without a prompt label", async () => {
+  const output = createWritableCapture();
+  const errorOutput = createWritableCapture();
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "message.delta",
+      data: {
+        type: "message.delta",
+        text: "hel"
+      }
+    },
+    {
+      event: "message.delta",
+      data: {
+        type: "message.delta",
+        text: "lo"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "hello"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    const turnResult = await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1
+    }, [], "say hello", output.output, errorOutput.output);
+
+    assert.equal(turnResult.assistantText, "hello");
+    assert.equal(turnResult.sawToolActivity, false);
+    assert.deepEqual(turnResult.warningMessages, []);
+    assert.deepEqual(turnResult.humanInputRequests, []);
+    assert.equal(errorOutput.text(), "");
+    assert.equal(output.text(), "hello\n");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("formatToolEventLine prints shell command and parameters", () => {
@@ -333,6 +390,58 @@ test("shouldSuppressHumanInputToolEventLine hides structured human-input tool ev
   }), false);
 });
 
+test("collectHumanInputAnswers grays human-input request tags for TTY output", async () => {
+  const output = createWritableCapture(true);
+  const answers = await collectHumanInputAnswers([
+    {
+      toolName: "ask_user_input",
+      requestId: "call_123",
+      type: "single-select",
+      allowSkip: false,
+      questions: [
+        {
+          header: "Contact Match",
+          id: "contact_match",
+          question: "Which contact?",
+          options: [
+            { id: "jazz-gill-1", label: "Jazz Gill" }
+          ]
+        }
+      ]
+    }
+  ], {
+    async question(query: string) {
+      output.output.write(query);
+      output.output.write("1\n");
+      return "1";
+    }
+  }, output.output);
+
+  assert.deepEqual(answers[0]?.selections[0]?.selectedOptions, [
+    { id: "jazz-gill-1", label: "Jazz Gill" }
+  ]);
+  assert.match(output.text(), /\u001b\[90m\[ask_user_input\]\u001b\[0m Contact Match/);
+});
+
+test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
+  const output = createWritableCapture();
+  const answerMessage = [
+    "Human input response:",
+    "- Answer for request call_123:",
+    "  - mode (Which mode?): safe (Safe)"
+  ].join("\n");
+
+  writeQueuedHumanInputFollowUp(output.output, answerMessage);
+
+  assert.equal(output.text(), [
+    "[human-input] queued answer follow-up:",
+    "Human input response:",
+    "- Answer for request call_123:",
+    "  - mode (Which mode?): safe (Safe)",
+    ""
+  ].join("\n"));
+});
+
 test("Jazz Gill contact disambiguation transcript uses correct ask_user_input request and response payloads", async () => {
   const toolArgs = {
     questions: [
@@ -453,14 +562,13 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       }
     }, output.output);
 
-    output.output.write("[human-input] queued answer follow-up\n");
+    writeQueuedHumanInputFollowUp(output.output, formatHumanInputAnswerMessage(answers));
 
     assert.equal(turnResult.assistantText, "");
     assert.equal(turnResult.sawToolActivity, true);
     assert.deepEqual(turnResult.warningMessages, []);
     assert.equal(errorOutput.text(), "");
     assert.equal(output.text(), [
-      "assistant> ",
       "",
       "",
       "[ask_user_input] Contact Match",
@@ -468,7 +576,10 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "  1. Jazz Gill (Contact ID 123) [jazz-gill-1] - If this is the primary Jazz Gill you want to analyze.",
       "  2. Not sure / search all [not-sure] - Search across all contacts named Jazz Gill and show matches.",
       "Select a number: 1",
-      "[human-input] queued answer follow-up",
+      "[human-input] queued answer follow-up:",
+      "Human input response:",
+      "- Answer for request call_contact_match:",
+      "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))",
       ""
     ].join("\n"));
 

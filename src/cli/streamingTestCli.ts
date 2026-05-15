@@ -135,6 +135,81 @@ function formatGray(text: string, output: WritableLike): string {
   return output.isTTY ? `\u001b[90m${text}\u001b[0m` : text;
 }
 
+function createAssistantPendingDisplay(output: WritableLike): {
+  start: () => void;
+  clearPending: () => void;
+  writeAssistantText: (text: string) => void;
+  resumeAfterInterruption: (assistantText: string) => void;
+  hasWrittenAssistantText: () => boolean;
+} {
+  const frames = [".", "..", "..."];
+  let frameIndex = 2;
+  let interval: NodeJS.Timeout | null = null;
+  let pendingVisible = false;
+  let assistantTextWritten = false;
+
+  const writeFrame = (frame: string): void => {
+    output.write(`\r\u001b[2K${frame}`);
+  };
+
+  const stopAnimation = (): void => {
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+  };
+
+  const start = (): void => {
+    if (!output.isTTY || interval) {
+      return;
+    }
+
+    pendingVisible = true;
+    frameIndex = 2;
+    output.write(frames[frameIndex] ?? "...");
+    interval = setInterval(() => {
+      frameIndex = (frameIndex + 1) % frames.length;
+      writeFrame(frames[frameIndex] ?? "...");
+    }, 250);
+    interval.unref();
+  };
+
+  const clearPending = (): void => {
+    stopAnimation();
+    if (pendingVisible) {
+      output.write("\r\u001b[2K");
+      pendingVisible = false;
+    }
+  };
+
+  const writeAssistantText = (text: string): void => {
+    clearPending();
+    if (text) {
+      assistantTextWritten = true;
+      output.write(text);
+    }
+  };
+
+  const resumeAfterInterruption = (assistantText: string): void => {
+    clearPending();
+    if (assistantText) {
+      assistantTextWritten = true;
+      output.write(assistantText);
+      return;
+    }
+
+    start();
+  };
+
+  return {
+    start,
+    clearPending,
+    writeAssistantText,
+    resumeAfterInterruption,
+    hasWrittenAssistantText: () => assistantTextWritten
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -386,7 +461,7 @@ function writeHumanInputQuestion(
   request: PendingHumanInputRequest,
   question: HumanInputQuestion
 ): void {
-  output.write(`\n[${request.toolName}] ${question.header}\n`);
+  output.write(`\n${formatGray(`[${request.toolName}]`, output)} ${question.header}\n`);
   output.write(`${question.question}\n`);
 
   question.options.forEach((option, index) => {
@@ -467,6 +542,11 @@ export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): stri
   }
 
   return lines.join("\n");
+}
+
+export function writeQueuedHumanInputFollowUp(output: WritableLike, answerMessage: string): void {
+  output.write(`${formatGray("[human-input] queued answer follow-up:", output)}\n`);
+  output.write(`${answerMessage}\n`);
 }
 
 function formatShellCommandArgs(args: Record<string, unknown>): string {
@@ -825,76 +905,86 @@ export async function streamAssistantTurn(
   };
   let sawToolActivity = false;
   const humanInputRequests: PendingHumanInputRequest[] = [];
+  const assistantDisplay = createAssistantPendingDisplay(output);
 
-  output.write("assistant> ");
+  assistantDisplay.start();
 
-  for await (const event of readSseEvents(response.body)) {
-    const previousText = progress.assistantText;
-    progress = applyStreamEvent(progress, event);
+  try {
+    for await (const event of readSseEvents(response.body)) {
+      const previousText = progress.assistantText;
+      progress = applyStreamEvent(progress, event);
 
-    if (
-      (event.event === "message.delta" || event.event === "message.done")
-      && progress.assistantText.startsWith(previousText)
-      && progress.assistantText.length > previousText.length
-    ) {
-      output.write(progress.assistantText.slice(previousText.length));
-    }
+      if (
+        (event.event === "message.delta" || event.event === "message.done")
+        && progress.assistantText.startsWith(previousText)
+        && progress.assistantText.length > previousText.length
+      ) {
+        assistantDisplay.writeAssistantText(progress.assistantText.slice(previousText.length));
+      }
 
-    if (event.event === "tool.call") {
-      sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
-      if (typeof payload?.name === "string") {
-        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
-        if (payload.name === "ask_user_question") {
+      if (event.event === "tool.call") {
+        sawToolActivity = true;
+        const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
+        if (typeof payload?.name === "string") {
+          const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
+          if (payload.name === "ask_user_question") {
+            appendHumanInputRequest(
+              humanInputRequests,
+              parseHumanInputToolCall(
+                payload.name,
+                payload.args,
+                toolCallId
+              )
+            );
+          }
+          if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
+            assistantDisplay.clearPending();
+            errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
+            assistantDisplay.resumeAfterInterruption(progress.assistantText);
+          }
+        }
+      }
+
+      if (event.event === "tool.result") {
+        sawToolActivity = true;
+        const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
+        if (typeof payload?.name === "string") {
+          const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
           appendHumanInputRequest(
             humanInputRequests,
-            parseHumanInputToolCall(
+            parsePendingHumanInputRequest(
               payload.name,
-              payload.args,
+              payload.result,
               toolCallId
             )
           );
-        }
-        if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
-          errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
-          output.write(`assistant> ${progress.assistantText}`);
-        }
-      }
-    }
-
-    if (event.event === "tool.result") {
-      sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
-      if (typeof payload?.name === "string") {
-        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
-        appendHumanInputRequest(
-          humanInputRequests,
-          parsePendingHumanInputRequest(
-            payload.name,
-            payload.result,
-            toolCallId
-          )
-        );
-        if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
-          errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
-          output.write(`assistant> ${progress.assistantText}`);
+          if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
+            assistantDisplay.clearPending();
+            errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
+            assistantDisplay.resumeAfterInterruption(progress.assistantText);
+          }
         }
       }
-    }
 
-    if (event.event === "warning") {
-      const payload = parseRuntimePayload<{ warning?: unknown }>(event);
-      if (typeof payload?.warning === "string") {
-        errorOutput.write(`${formatGray(`\n[warning] ${payload.warning}\n`, errorOutput)}`);
+      if (event.event === "warning") {
+        const payload = parseRuntimePayload<{ warning?: unknown }>(event);
+        if (typeof payload?.warning === "string") {
+          assistantDisplay.clearPending();
+          errorOutput.write(`${formatGray(`\n[warning] ${payload.warning}\n`, errorOutput)}`);
+        }
+      }
+
+      if (progress.isDone) {
+        break;
       }
     }
-
-    if (progress.isDone) {
-      break;
-    }
+  } finally {
+    assistantDisplay.clearPending();
   }
 
-  output.write("\n");
+  if (assistantDisplay.hasWrittenAssistantText()) {
+    output.write("\n");
+  }
 
   if (progress.errorMessage) {
     throw new Error(progress.errorMessage);
@@ -932,7 +1022,7 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
       let input = "";
 
       try {
-        input = (await readline.question("you> ")).trim();
+        input = (await readline.question("> ")).trim();
       } catch (error) {
         if (isReadlineExitError(error)) {
           stdout.write("\n");
@@ -969,7 +1059,7 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
           if (result.humanInputRequests.length > 0) {
             const answers = await collectHumanInputAnswers(result.humanInputRequests, readline, stdout);
             nextInput = formatHumanInputAnswerMessage(answers);
-            stdout.write(formatGray("[human-input] queued answer follow-up\n", stdout));
+            writeQueuedHumanInputFollowUp(stdout, nextInput);
             continue;
           }
 
@@ -989,7 +1079,7 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
           remainingAutoTurns = nextBudget.remainingAutoTurns;
           remainingWarningGraceTurns = nextBudget.remainingWarningGraceTurns;
           nextInput = options.autoContinueMessage;
-          stdout.write(formatGray(`[auto] you> ${nextInput}\n`, stdout));
+          stdout.write(formatGray(`[auto] > ${nextInput}\n`, stdout));
         }
 
         stdout.write("\n");
