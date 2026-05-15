@@ -1,7 +1,7 @@
 /*
  * Feature: unit coverage for the streaming test CLI helpers.
  * Notes: verifies SSE frame parsing, runtime event assembly, and in-memory history updates without depending on interactive terminal IO.
- * Recent changes: added regression coverage for chunked SSE parsing and successful turn commits.
+ * Recent changes: added coverage for structured human-input tool call handling.
  */
 
 import assert from "node:assert/strict";
@@ -12,8 +12,12 @@ import {
   commitTurn,
   extractSseEventBlocks,
   formatToolEventLine,
+  formatHumanInputAnswerMessage,
   isReadlineExitError,
   parseSseEventBlock,
+  parseHumanInputSelection,
+  parseHumanInputToolCall,
+  parsePendingHumanInputRequest,
   resolveCliOptions,
   shouldAutoContinue
 } from "../../src/cli/streamingTestCli.js";
@@ -158,6 +162,151 @@ test("formatToolEventLine prints generic tool arguments as JSON", () => {
     formatToolEventLine("tool.call", "web_fetch", { url: "https://example.test" }),
     "\n[tool.call] web_fetch args={\"url\":\"https://example.test\"}\n"
   );
+});
+
+test("parsePendingHumanInputRequest reads ask_user_input pending artifacts", () => {
+  const request = parsePendingHumanInputRequest("ask_user_input", JSON.stringify({
+    ok: false,
+    pending: true,
+    status: "pending",
+    confirmed: false,
+    requestId: "call_123",
+    type: "single-select",
+    allowSkip: false,
+    questions: [
+      {
+        header: "Test scope",
+        id: "test-scope",
+        question: "Which tests should run?",
+        options: [
+          { id: "unit", label: "Unit tests" },
+          { id: "all", label: "All tests", description: "Includes e2e" }
+        ]
+      }
+    ]
+  }));
+
+  assert.deepEqual(request, {
+    toolName: "ask_user_input",
+    requestId: "call_123",
+    type: "single-select",
+    allowSkip: false,
+    questions: [
+      {
+        header: "Test scope",
+        id: "test-scope",
+        question: "Which tests should run?",
+        options: [
+          { id: "unit", label: "Unit tests" },
+          { id: "all", label: "All tests", description: "Includes e2e" }
+        ]
+      }
+    ]
+  });
+});
+
+test("parseHumanInputToolCall accepts ask_user_question as a local alias", () => {
+  const request = parseHumanInputToolCall("ask_user_question", {
+    type: "multiple-select",
+    allowSkip: true,
+    questions: [
+      {
+        header: "Follow-up",
+        id: "next-step",
+        question: "What should happen next?",
+        options: [
+          { id: "continue", label: "Continue" },
+          { id: "pause", label: "Pause" }
+        ]
+      }
+    ]
+  }, "call_alias");
+
+  assert.equal(request?.toolName, "ask_user_question");
+  assert.equal(request?.requestId, "call_alias");
+  assert.equal(request?.type, "multiple-select");
+  assert.equal(request?.allowSkip, true);
+  assert.equal(request?.questions[0]?.id, "next-step");
+});
+
+test("parseHumanInputSelection supports option numbers, ids, and skippable prompts", () => {
+  const question = {
+    header: "Mode",
+    id: "mode",
+    question: "Which mode?",
+    options: [
+      { id: "fast", label: "Fast" },
+      { id: "safe", label: "Safe" },
+      { id: "full", label: "Full" }
+    ]
+  };
+
+  assert.deepEqual(parseHumanInputSelection(question, "single-select", false, "2"), {
+    ok: true,
+    selection: {
+      questionId: "mode",
+      questionText: "Which mode?",
+      skipped: false,
+      selectedOptions: [{ id: "safe", label: "Safe" }]
+    }
+  });
+
+  assert.deepEqual(parseHumanInputSelection(question, "multiple-select", false, "fast, 3"), {
+    ok: true,
+    selection: {
+      questionId: "mode",
+      questionText: "Which mode?",
+      skipped: false,
+      selectedOptions: [
+        { id: "fast", label: "Fast" },
+        { id: "full", label: "Full" }
+      ]
+    }
+  });
+
+  assert.deepEqual(parseHumanInputSelection(question, "single-select", true, ""), {
+    ok: true,
+    selection: {
+      questionId: "mode",
+      questionText: "Which mode?",
+      skipped: true,
+      selectedOptions: []
+    }
+  });
+  assert.deepEqual(parseHumanInputSelection(question, "single-select", false, ""), {
+    ok: false,
+    error: "Select an option before continuing."
+  });
+});
+
+test("formatHumanInputAnswerMessage serializes selected ids and labels", () => {
+  assert.equal(formatHumanInputAnswerMessage([
+    {
+      requestId: "call_123",
+      selections: [
+        {
+          questionId: "mode",
+          questionText: "Which mode?",
+          skipped: false,
+          selectedOptions: [
+            { id: "safe", label: "Safe" },
+            { id: "full", label: "Full" }
+          ]
+        },
+        {
+          questionId: "notes",
+          questionText: "Any notes?",
+          skipped: true,
+          selectedOptions: []
+        }
+      ]
+    }
+  ]), [
+    "Human input response:",
+    "- Answer for request call_123:",
+    "  - mode (Which mode?): safe, full (Safe, Full)",
+    "  - notes (Any notes?): skipped"
+  ].join("\n"));
 });
 
 test("commitTurn appends a complete user and assistant turn", () => {

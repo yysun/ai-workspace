@@ -1,7 +1,7 @@
 /*
  * Feature: shared runtime and API types for ai-workspace chat execution.
  * Notes: defines request and event contracts for the server-owned HTTP layer around llm-runtime.
- * Recent changes: replaced the mock runtime/tool abstractions with llm-runtime-backed execution types.
+ * Recent changes: added tool-call ids to streamed tool activity events for interactive client handling.
  */
 
 import type { LLMProviderName } from "llm-runtime";
@@ -40,8 +40,8 @@ export type RunChatCompletionInput = {
 export type RuntimeEvent =
   | { type: "message.delta"; text: string }
   | { type: "message.done"; message: { role: "assistant"; content: string } }
-  | { type: "tool.call"; name: string; args: unknown }
-  | { type: "tool.result"; name: string; args?: unknown; result: unknown }
+  | { type: "tool.call"; name: string; args: unknown; toolCallId?: string }
+  | { type: "tool.result"; name: string; args?: unknown; result: unknown; toolCallId?: string }
   | { type: "warning"; warning: string; code: "assistant_claimed_progress_without_tool_activity" }
   | { type: "error"; error: string };
 

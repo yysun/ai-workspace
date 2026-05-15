@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends AGENTS.md to the server system prompt, delegates built-ins and skills to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: replaced the mock runtime and custom tool layer with direct llm-runtime integration.
+ * Recent changes: forwards tool-call ids through execution context and runtime events.
  */
 
 import {
@@ -257,12 +257,18 @@ export function prepareToolCallArguments(
   };
 }
 
-function createToolExecutionContext(input: RunChatCompletionInput, environment: LLMEnvironment, messages: LLMChatMessage[]) {
+function createToolExecutionContext(
+  input: RunChatCompletionInput,
+  environment: LLMEnvironment,
+  messages: LLMChatMessage[],
+  toolCallId: string | undefined
+) {
   return {
     workingDirectory: input.workspaceRoot,
     abortSignal: input.signal,
     toolPermission: environment.defaults.toolPermission,
     reasoningEffort: environment.defaults.reasoningEffort,
+    ...(toolCallId ? { toolCallId } : {}),
     messages: messages as unknown as Array<Record<string, unknown>>
   };
 }
@@ -279,7 +285,8 @@ async function executeToolCall(
   args: Record<string, unknown>,
   input: RunChatCompletionInput,
   environment: LLMEnvironment,
-  messages: LLMChatMessage[]
+  messages: LLMChatMessage[],
+  toolCallId: string | undefined
 ): Promise<unknown> {
   if (!tool?.execute) {
     return createMissingToolResult(toolName);
@@ -287,7 +294,7 @@ async function executeToolCall(
 
   return await tool.execute(
     args,
-    createToolExecutionContext(input, environment, messages)
+    createToolExecutionContext(input, environment, messages, toolCallId)
   );
 }
 
@@ -438,7 +445,8 @@ export async function* runChatCompletion(
             eventQueue.push({
               type: "tool.call",
               name: toolName,
-              args: preparedArgs.eventArgs
+              args: preparedArgs.eventArgs,
+              toolCallId: toolCall.id
             });
 
             const toolResult = await executeToolCall(
@@ -447,13 +455,15 @@ export async function* runChatCompletion(
               preparedArgs.executionArgs,
               input,
               requestEnvironment,
-              nextMessages
+              nextMessages,
+              toolCall.id
             );
 
             eventQueue.push({
               type: "tool.result",
               name: toolName,
               args: preparedArgs.eventArgs,
+              toolCallId: toolCall.id,
               result: redactToolResultForEvent(toolResult)
             });
 

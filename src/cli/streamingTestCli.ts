@@ -1,7 +1,7 @@
 /*
  * Feature: interactive streaming test CLI for ai-workspace.
  * Notes: posts streaming chat requests to the local server, renders SSE deltas live, and keeps chat history in memory per process.
- * Recent changes: added a dependency-free terminal client plus pure helpers for SSE parsing and turn history management.
+ * Recent changes: added structured human-input tool handling for interactive CLI turns.
  */
 
 import { createInterface } from "node:readline/promises";
@@ -33,6 +33,7 @@ export type StreamTurnResult = {
   assistantText: string;
   sawToolActivity: boolean;
   warningMessages: string[];
+  humanInputRequests: PendingHumanInputRequest[];
 };
 
 export type AutoContinueBudget = {
@@ -44,7 +45,55 @@ type WritableLike = Pick<NodeJS.WriteStream, "write"> & {
   isTTY?: boolean;
 };
 
+type QuestionPrompt = {
+  question(query: string): Promise<string>;
+};
+
+export type HumanInputSelectionType = "single-select" | "multiple-select";
+
+export type HumanInputOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+export type HumanInputQuestion = {
+  header: string;
+  id: string;
+  question: string;
+  options: HumanInputOption[];
+};
+
+export type PendingHumanInputRequest = {
+  toolName: string;
+  requestId: string;
+  type: HumanInputSelectionType;
+  allowSkip: boolean;
+  questions: HumanInputQuestion[];
+};
+
+export type HumanInputSelection = {
+  questionId: string;
+  questionText?: string;
+  skipped: boolean;
+  selectedOptions: HumanInputOption[];
+};
+
+export type HumanInputAnswer = {
+  requestId: string;
+  selections: HumanInputSelection[];
+};
+
+export type HumanInputSelectionParseResult =
+  | { ok: true; selection: HumanInputSelection }
+  | { ok: false; error: string };
+
 const WARNING_AUTO_CONTINUE_GRACE_TURNS = 2;
+const HUMAN_INPUT_TOOL_NAMES = new Set([
+  "ask_user_input",
+  "human_intervention_request",
+  "ask_user_question"
+]);
 
 function readFlagValue(args: string[], flagName: string): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
@@ -96,6 +145,298 @@ function stringifyForDisplay(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (isRecord(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readTrimmedString(record: Record<string, unknown>, fieldName: string): string | null {
+  const value = record[fieldName];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseHumanInputOption(value: unknown): HumanInputOption | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readTrimmedString(value, "id");
+  const label = readTrimmedString(value, "label");
+  if (!id || !label) {
+    return null;
+  }
+
+  const description = readTrimmedString(value, "description");
+  return {
+    id,
+    label,
+    ...(description ? { description } : {})
+  };
+}
+
+function parseHumanInputQuestion(value: unknown): HumanInputQuestion | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const header = readTrimmedString(value, "header");
+  const id = readTrimmedString(value, "id");
+  const question = readTrimmedString(value, "question");
+  if (!header || !id || !question || !Array.isArray(value.options)) {
+    return null;
+  }
+
+  const options = value.options.map(parseHumanInputOption);
+  if (options.some((option) => option === null)) {
+    return null;
+  }
+
+  return {
+    header,
+    id,
+    question,
+    options: options as HumanInputOption[]
+  };
+}
+
+function normalizeHumanInputRequest(
+  toolName: string,
+  payload: unknown,
+  fallbackRequestId: string,
+  requirePendingArtifact: boolean
+): PendingHumanInputRequest | null {
+  if (!HUMAN_INPUT_TOOL_NAMES.has(toolName)) {
+    return null;
+  }
+
+  const record = parseJsonRecord(payload);
+  if (!record) {
+    return null;
+  }
+
+  if (requirePendingArtifact && !(record.pending === true && record.status === "pending")) {
+    return null;
+  }
+
+  const rawType = record.type;
+  const type: HumanInputSelectionType = rawType === "multiple-select" ? "multiple-select" : "single-select";
+  if (rawType !== undefined && rawType !== "single-select" && rawType !== "multiple-select") {
+    return null;
+  }
+
+  if (!Array.isArray(record.questions) || record.questions.length === 0) {
+    return null;
+  }
+
+  const questions = record.questions.map(parseHumanInputQuestion);
+  if (questions.some((question) => question === null)) {
+    return null;
+  }
+
+  return {
+    toolName,
+    requestId: readTrimmedString(record, "requestId") ?? fallbackRequestId,
+    type,
+    allowSkip: record.allowSkip === true,
+    questions: questions as HumanInputQuestion[]
+  };
+}
+
+export function parseHumanInputToolCall(
+  toolName: string,
+  args: unknown,
+  fallbackRequestId = ""
+): PendingHumanInputRequest | null {
+  return normalizeHumanInputRequest(toolName, args, fallbackRequestId, false);
+}
+
+export function parsePendingHumanInputRequest(
+  toolName: string,
+  result: unknown,
+  fallbackRequestId = ""
+): PendingHumanInputRequest | null {
+  return normalizeHumanInputRequest(toolName, result, fallbackRequestId, true);
+}
+
+function humanInputRequestKey(request: PendingHumanInputRequest): string {
+  const questionIds = request.questions.map((question) => question.id).join(",");
+  return `${request.toolName}:${request.requestId}:${questionIds}`;
+}
+
+function appendHumanInputRequest(
+  requests: PendingHumanInputRequest[],
+  request: PendingHumanInputRequest | null
+): void {
+  if (!request) {
+    return;
+  }
+
+  const key = humanInputRequestKey(request);
+  if (!requests.some((existingRequest) => humanInputRequestKey(existingRequest) === key)) {
+    requests.push(request);
+  }
+}
+
+function resolveHumanInputOption(question: HumanInputQuestion, token: string): HumanInputOption | null {
+  const index = Number(token);
+  if (Number.isInteger(index) && index >= 1 && index <= question.options.length) {
+    return question.options[index - 1] ?? null;
+  }
+
+  return question.options.find((option) => option.id === token) ?? null;
+}
+
+export function parseHumanInputSelection(
+  question: HumanInputQuestion,
+  selectionType: HumanInputSelectionType,
+  allowSkip: boolean,
+  rawInput: string
+): HumanInputSelectionParseResult {
+  const trimmedInput = rawInput.trim();
+  if (!trimmedInput) {
+    if (allowSkip) {
+      return {
+        ok: true,
+        selection: {
+          questionId: question.id,
+          questionText: question.question,
+          skipped: true,
+          selectedOptions: []
+        }
+      };
+    }
+
+    return { ok: false, error: "Select an option before continuing." };
+  }
+
+  const tokens = trimmedInput.split(",").map((token) => token.trim()).filter(Boolean);
+  if (selectionType === "single-select" && tokens.length !== 1) {
+    return { ok: false, error: "Select exactly one option." };
+  }
+
+  const selectedOptions: HumanInputOption[] = [];
+  for (const token of tokens) {
+    const option = resolveHumanInputOption(question, token);
+    if (!option) {
+      return { ok: false, error: `Unknown option: ${token}` };
+    }
+
+    if (!selectedOptions.some((selectedOption) => selectedOption.id === option.id)) {
+      selectedOptions.push(option);
+    }
+  }
+
+  return {
+    ok: true,
+    selection: {
+      questionId: question.id,
+      questionText: question.question,
+      skipped: false,
+      selectedOptions
+    }
+  };
+}
+
+function writeHumanInputQuestion(
+  output: WritableLike,
+  request: PendingHumanInputRequest,
+  question: HumanInputQuestion
+): void {
+  output.write(`\n[${request.toolName}] ${question.header}\n`);
+  output.write(`${question.question}\n`);
+
+  question.options.forEach((option, index) => {
+    const description = option.description ? ` - ${option.description}` : "";
+    output.write(`  ${index + 1}. ${option.label} [${option.id}]${description}\n`);
+  });
+}
+
+function createHumanInputPrompt(request: PendingHumanInputRequest): string {
+  const selectionHint = request.type === "multiple-select"
+    ? "Select option numbers or ids separated by commas"
+    : "Select an option number or id";
+  const skipHint = request.allowSkip ? ", or press Enter to skip" : "";
+  return `${selectionHint}${skipHint}: `;
+}
+
+export async function collectHumanInputAnswers(
+  requests: PendingHumanInputRequest[],
+  prompt: QuestionPrompt,
+  output: WritableLike
+): Promise<HumanInputAnswer[]> {
+  const answers: HumanInputAnswer[] = [];
+
+  for (const request of requests) {
+    const selections: HumanInputSelection[] = [];
+
+    for (const question of request.questions) {
+      writeHumanInputQuestion(output, request, question);
+
+      while (true) {
+        const rawSelection = await prompt.question(createHumanInputPrompt(request));
+        const parsedSelection = parseHumanInputSelection(
+          question,
+          request.type,
+          request.allowSkip,
+          rawSelection
+        );
+
+        if (parsedSelection.ok) {
+          selections.push(parsedSelection.selection);
+          break;
+        }
+
+        output.write(`${parsedSelection.error}\n`);
+      }
+    }
+
+    answers.push({
+      requestId: request.requestId,
+      selections
+    });
+  }
+
+  return answers;
+}
+
+export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): string {
+  const lines = ["Human input response:"];
+
+  for (const answer of answers) {
+    const requestLabel = answer.requestId ? ` for request ${answer.requestId}` : "";
+    lines.push(`- Answer${requestLabel}:`);
+
+    for (const selection of answer.selections) {
+      const questionLabel = selection.questionText
+        ? `${selection.questionId} (${selection.questionText})`
+        : selection.questionId;
+
+      if (selection.skipped) {
+        lines.push(`  - ${questionLabel}: skipped`);
+        continue;
+      }
+
+      const optionIds = selection.selectedOptions.map((option) => option.id).join(", ");
+      const optionLabels = selection.selectedOptions.map((option) => option.label).join(", ");
+      lines.push(`  - ${questionLabel}: ${optionIds} (${optionLabels})`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function formatShellCommandArgs(args: Record<string, unknown>): string {
@@ -438,6 +779,7 @@ export async function streamAssistantTurn(
     isDone: false
   };
   let sawToolActivity = false;
+  const humanInputRequests: PendingHumanInputRequest[] = [];
 
   output.write("assistant> ");
 
@@ -455,8 +797,18 @@ export async function streamAssistantTurn(
 
     if (event.event === "tool.call") {
       sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown }>(event);
+      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
       if (typeof payload?.name === "string") {
+        if (payload.name === "ask_user_question") {
+          appendHumanInputRequest(
+            humanInputRequests,
+            parseHumanInputToolCall(
+              payload.name,
+              payload.args,
+              typeof payload.toolCallId === "string" ? payload.toolCallId : ""
+            )
+          );
+        }
         errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
         output.write(`assistant> ${progress.assistantText}`);
       }
@@ -464,8 +816,16 @@ export async function streamAssistantTurn(
 
     if (event.event === "tool.result") {
       sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown }>(event);
+      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
       if (typeof payload?.name === "string") {
+        appendHumanInputRequest(
+          humanInputRequests,
+          parsePendingHumanInputRequest(
+            payload.name,
+            payload.result,
+            typeof payload.toolCallId === "string" ? payload.toolCallId : ""
+          )
+        );
         errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
         output.write(`assistant> ${progress.assistantText}`);
       }
@@ -496,7 +856,8 @@ export async function streamAssistantTurn(
   return {
     assistantText: progress.assistantText,
     sawToolActivity,
-    warningMessages: progress.warningMessages
+    warningMessages: progress.warningMessages,
+    humanInputRequests
   };
 }
 
@@ -553,6 +914,13 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
           const result = await streamAssistantTurn(options, history, nextInput, stdout, stderr);
           history = commitTurn(history, nextInput, result.assistantText);
           stdout.write("\n");
+
+          if (result.humanInputRequests.length > 0) {
+            const answers = await collectHumanInputAnswers(result.humanInputRequests, readline, stdout);
+            nextInput = formatHumanInputAnswerMessage(answers);
+            stdout.write(formatGray("[human-input] queued answer follow-up\n", stdout));
+            continue;
+          }
 
           if (!shouldAutoContinue(result.assistantText, result.sawToolActivity)) {
             break;
