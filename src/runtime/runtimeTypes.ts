@@ -42,6 +42,7 @@ export type RuntimeEvent =
   | { type: "message.done"; message: { role: "assistant"; content: string } }
   | { type: "tool.call"; name: string; args: unknown }
   | { type: "tool.result"; name: string; result: unknown }
+  | { type: "warning"; warning: string; code: "assistant_claimed_progress_without_tool_activity" }
   | { type: "error"; error: string };
 
 export type ResolvedRuntimeTarget = {

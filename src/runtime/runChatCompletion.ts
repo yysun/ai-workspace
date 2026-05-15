@@ -26,6 +26,8 @@ import {
   resolveRuntimeTarget
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
+import { detectMissingToolActivityWarning } from "./runtimeWarnings.js";
+import { applyWorkspaceEnv } from "../workspace/loadWorkspaceEnv.js";
 
 type RuntimeState = {
   messages: LLMChatMessage[];
@@ -172,18 +174,29 @@ export async function* runChatCompletion(
   input: RunChatCompletionInput,
   env: EnvConfig
 ): AsyncIterable<RuntimeEvent> {
-  const agentsMd = await loadAgentsMd(input.workspaceRoot);
-  const builtIns = createBuiltInSelection(env);
-  const runtimeTarget = resolveRuntimeTarget(input, env);
-  const environment = createLLMEnvironment(createEnvironmentOptions(env, input.workspaceRoot));
   const eventQueue = createAsyncEventQueue<RuntimeEvent>();
 
   void (async () => {
+    let restoreWorkspaceEnv: () => void = () => undefined;
+    let environment: ReturnType<typeof createLLMEnvironment> | undefined;
+
     try {
+      const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
+        target: process.env,
+        override: true
+      });
+      restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
+
+      const agentsMd = await loadAgentsMd(input.workspaceRoot);
+      const builtIns = createBuiltInSelection(env);
+      const runtimeTarget = resolveRuntimeTarget(input, env);
+      environment = createLLMEnvironment(createEnvironmentOptions(env, input.workspaceRoot));
+
       const resolvedTools = await resolveToolsAsync({
         environment,
         builtIns
       });
+      let sawToolActivity = false;
 
       const result = await respondWithTools({
         initialState: {
@@ -234,6 +247,7 @@ export async function* runChatCompletion(
           for (const toolCall of response.tool_calls ?? []) {
             const toolName = toolCall.function.name;
             const parsedArgs = safeParseToolArguments(toolCall.function.arguments);
+            sawToolActivity = true;
 
             eventQueue.push({
               type: "tool.call",
@@ -296,6 +310,15 @@ export async function* runChatCompletion(
           type: "message.done",
           message: finalMessage
         });
+
+        const warning = detectMissingToolActivityWarning(finalMessage.content, sawToolActivity);
+        if (warning) {
+          eventQueue.push({
+            type: "warning",
+            code: "assistant_claimed_progress_without_tool_activity",
+            warning
+          });
+        }
       } else {
         eventQueue.push({
           type: "error",
@@ -309,7 +332,10 @@ export async function* runChatCompletion(
         error: message
       });
     } finally {
-      await disposeLLMEnvironment(environment).catch(() => undefined);
+      restoreWorkspaceEnv();
+      if (environment) {
+        await disposeLLMEnvironment(environment).catch(() => undefined);
+      }
       eventQueue.close();
     }
   })();

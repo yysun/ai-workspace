@@ -35,7 +35,11 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 async function startServer(): Promise<{ server: Server; baseUrl: string }> {
-  const app = createServer(envWithoutProviderCredentials);
+  return startServerWithEnv(envWithoutProviderCredentials);
+}
+
+async function startServerWithEnv(env: EnvConfig): Promise<{ server: Server; baseUrl: string }> {
+  const app = createServer(env);
   const server = app.listen(0, "127.0.0.1");
 
   await once(server, "listening");
@@ -156,6 +160,43 @@ test("POST /chat/completions streams runtime errors over SSE when provider confi
     assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/i);
     assert.match(body, /event: error/);
     assert.match(body, /No configuration found for openai provider/i);
+    assert.match(body, /event: done/);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("POST /chat/completions streams workspace env load failures as SSE error events", async () => {
+  const brokenWorkspaceRoot = new URL("../../package.json", import.meta.url).pathname;
+  const { server, baseUrl } = await startServerWithEnv({
+    ...envWithoutProviderCredentials,
+    workspaceRoot: brokenWorkspaceRoot
+  });
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "default",
+        stream: true,
+        messages: [
+          {
+            role: "user",
+            content: "hello"
+          }
+        ]
+      })
+    });
+
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/i);
+    assert.match(body, /event: error/);
+    assert.match(body, /\.env/);
     assert.match(body, /event: done/);
   } finally {
     await closeServer(server);

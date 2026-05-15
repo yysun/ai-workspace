@@ -114,7 +114,10 @@ export function createProviderConfigs(env: EnvConfig): LLMProviderConfigs {
 export function createEnvironmentOptions(env: EnvConfig, workspaceRoot: string): LLMEnvironmentOptions {
   return {
     providers: createProviderConfigs(env),
-    skillRoots: [path.join(workspaceRoot, "skills")],
+    skillRoots: [
+      path.join(workspaceRoot, "skills"),
+      path.join(workspaceRoot, ".agents", "skills")
+    ],
     defaults: {
       reasoningEffort: env.llmReasoning,
       toolPermission: env.llmPermission

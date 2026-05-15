@@ -10,6 +10,7 @@ import {
   buildRuntimeMessages,
   composeSystemPrompt,
   createBuiltInSelection,
+  createEnvironmentOptions,
   describeRuntimeDefaults,
   resolveMaxTokens,
   resolveRuntimeTarget,
@@ -117,6 +118,15 @@ test("createBuiltInSelection narrows write access when permission is read", () =
   assert.equal(builtIns.read_file, true);
   assert.equal(builtIns.write_file, false);
   assert.equal(builtIns.shell_cmd, false);
+});
+
+test("createEnvironmentOptions loads skills from both workspace skill roots", () => {
+  const options = createEnvironmentOptions(baseEnv, "/workspace");
+
+  assert.deepEqual(options.skillRoots, [
+    "/workspace/skills",
+    "/workspace/.agents/skills"
+  ]);
 });
 
 test("describeRuntimeDefaults reports generic LLM_* defaults for health output", () => {

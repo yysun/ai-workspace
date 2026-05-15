@@ -24,6 +24,7 @@ export type ParsedSseEvent = {
 export type StreamProgress = {
   assistantText: string;
   errorMessage?: string;
+  warningMessages: string[];
   isComplete: boolean;
   isDone: boolean;
 };
@@ -31,6 +32,7 @@ export type StreamProgress = {
 export type StreamTurnResult = {
   assistantText: string;
   sawToolActivity: boolean;
+  warningMessages: string[];
 };
 
 type WritableLike = Pick<NodeJS.WriteStream, "write"> & {
@@ -75,6 +77,13 @@ function parseOptionalPositiveInteger(value: string | undefined): number | null 
 
 function formatGray(text: string, output: WritableLike): string {
   return output.isTTY ? `\u001b[90m${text}\u001b[0m` : text;
+}
+
+function isReadlineClosedError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ERR_USE_AFTER_CLOSE";
 }
 
 export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOptions {
@@ -259,6 +268,18 @@ export function applyStreamEvent(progress: StreamProgress, event: ParsedSseEvent
     };
   }
 
+  if (event.event === "warning") {
+    const payload = parseRuntimePayload<{ warning?: unknown }>(event);
+    if (typeof payload?.warning !== "string") {
+      return progress;
+    }
+
+    return {
+      ...progress,
+      warningMessages: [...progress.warningMessages, payload.warning]
+    };
+  }
+
   return progress;
 }
 
@@ -328,6 +349,7 @@ export async function streamAssistantTurn(
 
   let progress: StreamProgress = {
     assistantText: "",
+    warningMessages: [],
     isComplete: false,
     isDone: false
   };
@@ -365,6 +387,13 @@ export async function streamAssistantTurn(
       }
     }
 
+    if (event.event === "warning") {
+      const payload = parseRuntimePayload<{ warning?: unknown }>(event);
+      if (typeof payload?.warning === "string") {
+        errorOutput.write(`${formatGray(`\n[warning] ${payload.warning}\n`, errorOutput)}`);
+      }
+    }
+
     if (progress.isDone) {
       break;
     }
@@ -382,7 +411,8 @@ export async function streamAssistantTurn(
 
   return {
     assistantText: progress.assistantText,
-    sawToolActivity
+    sawToolActivity,
+    warningMessages: progress.warningMessages
   };
 }
 
@@ -403,7 +433,17 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
 
   try {
     while (true) {
-      const input = (await readline.question("you> ")).trim();
+      let input = "";
+
+      try {
+        input = (await readline.question("you> ")).trim();
+      } catch (error) {
+        if (isReadlineClosedError(error)) {
+          break;
+        }
+
+        throw error;
+      }
 
       if (!input) {
         continue;
@@ -428,7 +468,11 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
           history = commitTurn(history, nextInput, result.assistantText);
           stdout.write("\n");
 
-          if (remainingAutoTurns < 1 || !shouldAutoContinue(result.assistantText, result.sawToolActivity)) {
+          if (
+            result.warningMessages.length > 0
+            || remainingAutoTurns < 1
+            || !shouldAutoContinue(result.assistantText, result.sawToolActivity)
+          ) {
             break;
           }
 

@@ -25,7 +25,7 @@ npm run build
 npm run dev
 ```
 
-The server optionally loads `.env` via `dotenv` for local development. Runtime code still reads only from `process.env`.
+The server optionally loads its local `.env` via `dotenv` for local development. Before each chat request it also loads `${WORKSPACE_ROOT}/.env` into `process.env` so workspace-scoped variables are available during runtime execution.
 
 Health check:
 
@@ -111,9 +111,9 @@ Auto-continue one or more follow-up turns with a synthetic user message such as 
 npm run chat:cli -- --auto-continue --auto-continue-message "go ahead" --auto-continue-turns 1
 ```
 
-The CLI sends `stream: true` requests to `/chat/completions`, prints assistant output as SSE deltas arrive, and keeps the full conversation in memory for the life of the process. Tool-call and tool-result lines are shown in gray in TTY terminals. Use `/clear` to reset history and `/exit` to quit.
+The CLI sends `stream: true` requests to `/chat/completions`, prints assistant output as SSE deltas arrive, and keeps the full conversation in memory for the life of the process. Tool-call, tool-result, and warning lines are shown in gray in TTY terminals. Use `/clear` to reset history and `/exit` to quit.
 
-When `--auto-continue` is enabled, the CLI can automatically submit a bounded follow-up message after a planning-style assistant reply that says things like `I will ...` or asks to proceed. This is useful for quick experiments, but it stays opt-in because it can otherwise mask places where the model should have called a tool directly.
+When `--auto-continue` is enabled, the CLI can automatically submit a bounded follow-up message after a planning-style assistant reply that says things like `I will ...` or asks to proceed. This is useful for quick experiments, but it stays opt-in because it can otherwise mask places where the model should have called a tool directly. If the runtime emits a warning that the assistant claimed it was already proceeding without any tool activity, the CLI stops auto-continue for that turn so the mismatch stays visible.
 
 ## Mount a workspace
 
@@ -142,6 +142,12 @@ Expected layout:
       SKILL.md
       scripts/
       resources/
+  .agents/
+    skills/
+      some-skill/
+        SKILL.md
+        scripts/
+        resources/
   data/
   process/
   presentations/
@@ -155,7 +161,7 @@ Required endpoints:
 - `POST /chat/completions`
 - `POST /chat` as an alias
 
-When `stream` is `true`, chat responses are returned as SSE with events such as `message.delta`, `message.done`, and `done`.
+When `stream` is `true`, chat responses are returned as SSE with events such as `message.delta`, `message.done`, `warning`, and `done`.
 
 When `stream` is not `true`, the server still uses the same runtime event stream internally and returns an aggregated JSON response.
 
@@ -167,7 +173,7 @@ Per request, the server:
 
 1. Reads `AGENTS.md` if present.
 2. Prepends one server-owned system message that contains the default system prompt plus appended `AGENTS.md` content.
-3. Initializes `llm-runtime` with the workspace `skills/` root.
+3. Initializes `llm-runtime` with both workspace skill roots: `skills/` and `.agents/skills/`.
 
 `llm-runtime` then provides built-in skill loading through `load_skill`. The server does not maintain its own skill registry or frontmatter parser.
 
@@ -175,6 +181,7 @@ Per request, the server:
 
 - Workspace built-ins are provided by `llm-runtime`.
 - The server passes `WORKSPACE_ROOT` as the `workingDirectory` used for runtime tool execution.
+- The server also loads `${WORKSPACE_ROOT}/.env` before each runtime call so workspace-local variables are visible to runtime code.
 - `read_file`, `list_files`, `grep`, and `load_skill` are enabled by default.
 - `write_file` is available when `LLM_PERMISSION` is not `read`.
 - `shell_cmd` stays disabled by server policy in v1.
@@ -208,6 +215,11 @@ Runtime defaults:
 - `LLM_PERMISSION` sets the default tool permission passed to `llm-runtime`.
 - `LLM_REASONING` sets the default reasoning effort passed to `llm-runtime`.
 - Set `LLM_PROVIDER=azure` together with `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_RESOURCE_NAME`, and `AZURE_OPENAI_DEPLOYMENT_NAME` to use Azure OpenAI.
+
+Workspace runtime variables:
+
+- If `${WORKSPACE_ROOT}/.env` exists, it is loaded before each chat request.
+- This is intended for workspace-local variables such as `CRM_BASE_URL` and `CRM_ACCESS_TOKEN`.
 
 ## Docker
 

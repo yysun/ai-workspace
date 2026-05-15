@@ -61,6 +61,7 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
   let assistantContent = "";
   let finalContent: string | undefined;
   let errorMessage: string | undefined;
+  const warnings: string[] = [];
 
   for (const event of events) {
     if (event.type === "message.delta") {
@@ -73,6 +74,10 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
 
     if (event.type === "error") {
       errorMessage = event.error;
+    }
+
+    if (event.type === "warning") {
+      warnings.push(event.warning);
     }
   }
 
@@ -91,6 +96,7 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
       model,
+      ...(warnings.length > 0 ? { warnings } : {}),
       choices: [
         {
           index: 0,

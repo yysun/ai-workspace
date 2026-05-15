@@ -80,6 +80,7 @@ test("parseSseEventBlock reads event and data lines", () => {
 test("applyStreamEvent assembles deltas and final completion", () => {
   const initial = {
     assistantText: "",
+    warningMessages: [],
     isComplete: false,
     isDone: false
   };
@@ -96,6 +97,22 @@ test("applyStreamEvent assembles deltas and final completion", () => {
   assert.equal(afterDelta.assistantText, "hel");
   assert.equal(afterDone.assistantText, "hello");
   assert.equal(afterDone.isComplete, true);
+});
+
+test("applyStreamEvent collects runtime warning messages", () => {
+  const updated = applyStreamEvent({
+    assistantText: "Proceeding with the CRM search now.",
+    warningMessages: [],
+    isComplete: true,
+    isDone: false
+  }, {
+    event: "warning",
+    data: "{\"type\":\"warning\",\"code\":\"assistant_claimed_progress_without_tool_activity\",\"warning\":\"Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn.\"}"
+  });
+
+  assert.deepEqual(updated.warningMessages, [
+    "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn."
+  ]);
 });
 
 test("commitTurn appends a complete user and assistant turn", () => {
