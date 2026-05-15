@@ -53,6 +53,19 @@ export function detectMissingToolActivityWarning(assistantText: string, sawToolA
   return "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn.";
 }
 
+export function detectIntentOnlyNarrationWarning(assistantText: string): string | null {
+  const normalizedText = assistantText.trim();
+  if (!normalizedText) {
+    return null;
+  }
+
+  if (!STARTED_ACTION_PATTERNS.some((pattern) => pattern.test(normalizedText))) {
+    return null;
+  }
+
+  return "Assistant narrated the next action instead of producing a tool call or verified final answer.";
+}
+
 export function detectUnsupportedWorkspaceAccessWarning(assistantText: string, sawToolActivity: boolean): string | null {
   if (sawToolActivity) {
     return null;
@@ -93,4 +106,17 @@ export function classifyMissingActionEvidenceResponse(
   }
 
   return null;
+}
+
+export function classifyIntentOnlyNarrationResponse(assistantText: string): MissingActionEvidenceAssessment | null {
+  const intentOnlyNarrationWarning = detectIntentOnlyNarrationWarning(assistantText);
+  if (!intentOnlyNarrationWarning) {
+    return null;
+  }
+
+  return {
+    classification: "intent_only_narration",
+    warning: "Assistant narrated the next action instead of producing a tool call or verified final answer. Retrying the turn.",
+    transientInstruction: TOOL_ACTION_RETRY_INSTRUCTION
+  };
 }

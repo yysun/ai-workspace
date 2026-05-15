@@ -22,14 +22,14 @@ const baseEnv: EnvConfig = {
 
 test("load_skill resolves a skill from .agents/skills", async () => {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "ai-workspace-skill-roots-"));
-  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "crm-lookup");
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "api-lookup");
   await mkdir(skillRoot, { recursive: true });
   await writeFile(path.join(skillRoot, "SKILL.md"), [
     "---",
-    "name: crm-lookup",
-    "description: Resolve CRM lookups.",
+    "name: api-lookup",
+    "description: Resolve API lookups.",
     "---",
-    "Use this skill to resolve CRM records from the hidden workspace skill root."
+    "Use this skill to resolve API records from the hidden workspace skill root."
   ].join("\n"));
 
   const environment = createLLMEnvironment(createEnvironmentOptions(baseEnv, workspaceRoot));
@@ -41,14 +41,14 @@ test("load_skill resolves a skill from .agents/skills", async () => {
     });
 
     const result = await tools.load_skill?.execute?.({
-      skill_id: "crm-lookup"
+      skill_id: "api-lookup"
     });
 
     assert.equal(typeof result, "string");
     const normalizedResult = String(result).replaceAll("\\", "/");
-    assert.match(normalizedResult, /<skill_context id="crm-lookup">/);
-    assert.match(normalizedResult, /<description>Resolve CRM lookups\.<\/description>/);
-    assert.match(normalizedResult, /<skill_root>.*\/.agents\/skills\/crm-lookup<\/skill_root>/);
+    assert.match(normalizedResult, /<skill_context id="api-lookup">/);
+    assert.match(normalizedResult, /<description>Resolve API lookups\.<\/description>/);
+    assert.match(normalizedResult, /<skill_root>.*\/.agents\/skills\/api-lookup<\/skill_root>/);
   } finally {
     await disposeLLMEnvironment(environment).catch(() => undefined);
     await rm(workspaceRoot, { recursive: true, force: true });

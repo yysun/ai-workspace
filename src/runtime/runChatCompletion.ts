@@ -29,6 +29,7 @@ import {
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
 import {
+  classifyIntentOnlyNarrationResponse,
   classifyMissingActionEvidenceResponse,
   detectMissingToolActivityWarning
 } from "./runtimeWarnings.js";
@@ -42,8 +43,8 @@ type RuntimeState = {
 
 const REJECTED_TEXT_RETRY_LIMIT = 2;
 
-function shouldRequireActionEvidence(state: RuntimeState): boolean {
-  return !state.finalText.trim();
+export function shouldRequireActionEvidence(state: Pick<RuntimeState, "finalText">, sawToolActivity: boolean): boolean {
+  return !sawToolActivity && !state.finalText.trim();
 }
 
 function createRejectedTextRetryWarning(
@@ -155,6 +156,107 @@ function safeSerializeToolResult(result: unknown): string {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSensitiveEnvName(name: string): boolean {
+  return /(^|_)(AUTH|BEARER|CREDENTIAL|KEY|PASS|PASSWORD|SECRET|TOKEN)(_|$)/i.test(name);
+}
+
+function redactKnownSecretValues(value: string, envSource: NodeJS.ProcessEnv): string {
+  let redactedValue = value;
+
+  const secretEntries = Object.entries(envSource)
+    .filter((entry): entry is [string, string] => {
+      const [envName, envValue] = entry;
+      return !!envValue && envValue.length >= 4 && isSensitiveEnvName(envName);
+    })
+    .sort((left, right) => right[1].length - left[1].length);
+
+  for (const [envName, envValue] of secretEntries) {
+    redactedValue = redactedValue.split(envValue).join(`[redacted:$${envName}]`);
+  }
+
+  return redactedValue;
+}
+
+export function redactToolResultForEvent(result: unknown, envSource: NodeJS.ProcessEnv = process.env): unknown {
+  if (typeof result === "string") {
+    return redactKnownSecretValues(result, envSource);
+  }
+
+  if (Array.isArray(result)) {
+    return result.map((entry) => redactToolResultForEvent(entry, envSource));
+  }
+
+  if (isRecord(result)) {
+    return Object.fromEntries(
+      Object.entries(result).map(([key, entry]) => [key, redactToolResultForEvent(entry, envSource)])
+    );
+  }
+
+  return result;
+}
+
+function expandEnvReferences(value: string, envSource: NodeJS.ProcessEnv, redactSecrets: boolean): string {
+  const expandedValue = value.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (match, bracedName: string | undefined, bareName: string | undefined) => {
+    const envName = bracedName ?? bareName;
+    if (!envName) {
+      return match;
+    }
+
+    const envValue = envSource[envName];
+    if (envValue === undefined) {
+      return match;
+    }
+
+    if (redactSecrets && isSensitiveEnvName(envName)) {
+      return `[redacted:$${envName}]`;
+    }
+
+    return envValue;
+  });
+
+  return redactSecrets ? redactKnownSecretValues(expandedValue, envSource) : expandedValue;
+}
+
+function mapShellCommandValue(value: unknown, envSource: NodeJS.ProcessEnv, redactSecrets: boolean): unknown {
+  if (typeof value === "string") {
+    return expandEnvReferences(value, envSource, redactSecrets);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => mapShellCommandValue(entry, envSource, redactSecrets));
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, mapShellCommandValue(entry, envSource, redactSecrets)])
+    );
+  }
+
+  return value;
+}
+
+export function prepareToolCallArguments(
+  toolName: string,
+  parsedArgs: Record<string, unknown>,
+  envSource: NodeJS.ProcessEnv = process.env
+): { executionArgs: Record<string, unknown>; eventArgs: Record<string, unknown> } {
+  if (toolName !== "shell_cmd") {
+    return {
+      executionArgs: parsedArgs,
+      eventArgs: parsedArgs
+    };
+  }
+
+  return {
+    executionArgs: mapShellCommandValue(parsedArgs, envSource, false) as Record<string, unknown>,
+    eventArgs: mapShellCommandValue(parsedArgs, envSource, true) as Record<string, unknown>
+  };
+}
+
 function createToolExecutionContext(input: RunChatCompletionInput, environment: LLMEnvironment, messages: LLMChatMessage[]) {
   return {
     workingDirectory: input.workspaceRoot,
@@ -174,7 +276,7 @@ function createMissingToolResult(toolName: string): { error: string } {
 async function executeToolCall(
   tool: LLMToolDefinition | undefined,
   toolName: string,
-  rawArguments: string,
+  args: Record<string, unknown>,
   input: RunChatCompletionInput,
   environment: LLMEnvironment,
   messages: LLMChatMessage[]
@@ -184,7 +286,7 @@ async function executeToolCall(
   }
 
   return await tool.execute(
-    safeParseToolArguments(rawArguments),
+    args,
     createToolExecutionContext(input, environment, messages)
   );
 }
@@ -250,6 +352,7 @@ export async function* runChatCompletion(
         },
         emptyTextRetryLimit: 0,
         rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
+        markSyntheticToolCalls: true,
         abortSignal: input.signal,
         modelRequest: {
           mode: "stream",
@@ -287,13 +390,11 @@ export async function* runChatCompletion(
             }
           ];
         },
-        requiresActionEvidence: ({ state }) => shouldRequireActionEvidence(state),
+        requiresActionEvidence: ({ state }) => shouldRequireActionEvidence(state, sawToolActivity),
         classifyTextResponse: ({ responseText, requiresActionEvidence }) => {
-          if (!requiresActionEvidence) {
-            return undefined;
-          }
-
-          const assessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity);
+          const assessment = requiresActionEvidence
+            ? classifyMissingActionEvidenceResponse(responseText, sawToolActivity)
+            : classifyIntentOnlyNarrationResponse(responseText);
           if (!assessment) {
             return undefined;
           }
@@ -304,7 +405,8 @@ export async function* runChatCompletion(
           };
         },
         onRejectedTextResponse: async ({ state, responseText, classification, retryCount }) => {
-          const actionEvidenceAssessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity);
+          const actionEvidenceAssessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity)
+            ?? classifyIntentOnlyNarrationResponse(responseText);
           const warning = actionEvidenceAssessment?.warning ?? createRejectedTextRetryWarning(
             classification,
             retryCount,
@@ -331,17 +433,18 @@ export async function* runChatCompletion(
             const toolName = toolCall.function.name;
             const parsedArgs = safeParseToolArguments(toolCall.function.arguments);
             sawToolActivity = true;
+            const preparedArgs = prepareToolCallArguments(toolName, parsedArgs);
 
             eventQueue.push({
               type: "tool.call",
               name: toolName,
-              args: parsedArgs
+              args: preparedArgs.eventArgs
             });
 
             const toolResult = await executeToolCall(
               resolvedTools[toolName],
               toolName,
-              toolCall.function.arguments,
+              preparedArgs.executionArgs,
               input,
               requestEnvironment,
               nextMessages
@@ -350,7 +453,8 @@ export async function* runChatCompletion(
             eventQueue.push({
               type: "tool.result",
               name: toolName,
-              result: toolResult
+              args: preparedArgs.eventArgs,
+              result: redactToolResultForEvent(toolResult)
             });
 
             const serializedResult = safeSerializeToolResult(toolResult);
@@ -362,7 +466,7 @@ export async function* runChatCompletion(
             nextMessages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: serializedResult
+              content: redactKnownSecretValues(serializedResult, process.env)
             });
           }
 

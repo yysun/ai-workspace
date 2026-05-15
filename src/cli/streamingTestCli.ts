@@ -86,6 +86,61 @@ function formatGray(text: string, output: WritableLike): string {
   return output.isTTY ? `\u001b[90m${text}\u001b[0m` : text;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringifyForDisplay(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function formatShellCommandArgs(args: Record<string, unknown>): string {
+  if (typeof args.command !== "string") {
+    const serializedArgs = stringifyForDisplay(args);
+    return serializedArgs ? ` args=${serializedArgs}` : "";
+  }
+
+  const parameters = Array.isArray(args.parameters)
+    ? args.parameters.filter((parameter): parameter is string => typeof parameter === "string")
+    : [];
+  const parts = [
+    `command=${JSON.stringify(args.command)}`,
+    `args=${JSON.stringify(parameters)}`
+  ];
+
+  for (const optionalField of ["directory", "timeout", "output_format", "output_detail"]) {
+    if (args[optionalField] !== undefined) {
+      const serializedValue = stringifyForDisplay(args[optionalField]);
+      if (serializedValue) {
+        parts.push(`${optionalField}=${serializedValue}`);
+      }
+    }
+  }
+
+  return ` ${parts.join(" ")}`;
+}
+
+export function formatToolArgsForDisplay(toolName: string, args: unknown): string {
+  if (!isRecord(args)) {
+    return "";
+  }
+
+  if (toolName === "shell_cmd") {
+    return formatShellCommandArgs(args);
+  }
+
+  const serializedArgs = stringifyForDisplay(args);
+  return serializedArgs ? ` args=${serializedArgs}` : "";
+}
+
+export function formatToolEventLine(kind: "tool.call" | "tool.result", name: string, args: unknown): string {
+  return `\n[${kind}] ${name}${formatToolArgsForDisplay(name, args)}\n`;
+}
+
 export function isReadlineExitError(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
@@ -400,18 +455,18 @@ export async function streamAssistantTurn(
 
     if (event.event === "tool.call") {
       sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown }>(event);
+      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown }>(event);
       if (typeof payload?.name === "string") {
-        errorOutput.write(`${formatGray(`\n[tool.call] ${payload.name}\n`, errorOutput)}`);
+        errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
         output.write(`assistant> ${progress.assistantText}`);
       }
     }
 
     if (event.event === "tool.result") {
       sawToolActivity = true;
-      const payload = parseRuntimePayload<{ name?: unknown }>(event);
+      const payload = parseRuntimePayload<{ name?: unknown; args?: unknown }>(event);
       if (typeof payload?.name === "string") {
-        errorOutput.write(`${formatGray(`\n[tool.result] ${payload.name}\n`, errorOutput)}`);
+        errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
         output.write(`assistant> ${progress.assistantText}`);
       }
     }

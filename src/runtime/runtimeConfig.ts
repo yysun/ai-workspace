@@ -17,7 +17,7 @@ import type {
 import type { EnvConfig } from "../config/env.js";
 import type { ChatMessage, ResolvedRuntimeTarget, RunChatCompletionInput } from "./runtimeTypes.js";
 
-const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure"];
+const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
 
 const DEFAULT_SYSTEM_PROMPT = [
   "You are a workspace agent running inside ai-workspace.",
@@ -29,6 +29,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
   "If an external API or network lookup is required, use `shell_cmd` or `web_fetch` instead of narrating intent.",
   "Prefer `shell_cmd` for authenticated API work or whenever workspace instructions tell you to use `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
+  "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
   "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",
   "Ask for clarification only when required information is still missing after inspection or the user requests a destructive, modifying, external, or irreversible action.",
   "Do not reveal secret values unless the user explicitly asks to inspect the file contents; otherwise report only presence, absence, or other non-sensitive metadata."
@@ -55,6 +56,10 @@ function configuredProvidersFromEnv(env: EnvConfig): LLMProviderName[] {
 
   if (env.googleApiKey) {
     providers.push("google");
+  }
+
+  if (env.openAiCompatibleApiKey && env.openAiCompatibleBaseUrl) {
+    providers.push("openai-compatible");
   }
 
   return providers;
@@ -91,6 +96,8 @@ function fallbackModelForProvider(provider: LLMProviderName): string {
   switch (provider) {
     case "azure":
       return "gpt-4.1-mini";
+    case "openai-compatible":
+      return "gpt-4.1-mini";
     case "anthropic":
       return "claude-sonnet-4-20250514";
     case "google":
@@ -115,6 +122,9 @@ export function createProviderConfigs(env: EnvConfig): LLMProviderConfigs {
       }
       : {}),
     ...(env.anthropicApiKey ? { anthropic: { apiKey: env.anthropicApiKey } } : {}),
+    ...(env.openAiCompatibleApiKey && env.openAiCompatibleBaseUrl
+      ? { "openai-compatible": { apiKey: env.openAiCompatibleApiKey, baseUrl: env.openAiCompatibleBaseUrl } }
+      : {}),
     ...(env.googleApiKey ? { google: { apiKey: env.googleApiKey } } : {})
   };
 }

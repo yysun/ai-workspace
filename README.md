@@ -206,6 +206,8 @@ Supported variables:
 - `AZURE_OPENAI_API_VERSION`
 - `GOOGLE_API_KEY`
 - `ANTHROPIC_API_KEY`
+- `OPENAI_COMPATIBLE_API_KEY`
+- `OPENAI_COMPATIBLE_BASE_URL`
 
 Runtime defaults:
 
@@ -216,6 +218,7 @@ Runtime defaults:
 - `LLM_PERMISSION` sets the default tool permission passed to `llm-runtime`.
 - `LLM_REASONING` sets the default reasoning effort passed to `llm-runtime`.
 - Set `LLM_PROVIDER=azure` together with `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_RESOURCE_NAME`, and `AZURE_OPENAI_DEPLOYMENT_NAME` to use Azure OpenAI.
+- Set `LLM_PROVIDER=openai-compatible` together with `OPENAI_COMPATIBLE_API_KEY` and `OPENAI_COMPATIBLE_BASE_URL` to use an OpenAI-compatible endpoint.
 
 Workspace runtime variables:
 

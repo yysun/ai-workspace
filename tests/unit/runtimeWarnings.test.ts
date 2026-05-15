@@ -7,13 +7,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifyIntentOnlyNarrationResponse,
   classifyMissingActionEvidenceResponse,
+  detectIntentOnlyNarrationWarning,
   detectMissingToolActivityWarning,
   detectUnsupportedWorkspaceAccessWarning
 } from "../../src/runtime/runtimeWarnings.js";
 
 test("detectMissingToolActivityWarning flags present-tense progress claims without tool activity", () => {
-  const warning = detectMissingToolActivityWarning("Proceeding with the CRM search now.", false);
+  const warning = detectMissingToolActivityWarning("Proceeding with the API search now.", false);
 
   assert.equal(
     warning,
@@ -31,17 +33,24 @@ test("detectMissingToolActivityWarning flags immediate tool-action claims withou
 });
 
 test("detectMissingToolActivityWarning ignores optional suggestions and real tool activity", () => {
-  assert.equal(detectMissingToolActivityWarning("I can search the CRM next if you want.", false), null);
-  assert.equal(detectMissingToolActivityWarning("Before I proceed, confirm the contact.", false), null);
-  assert.equal(detectMissingToolActivityWarning("Proceeding with the CRM search now.", true), null);
+  assert.equal(detectMissingToolActivityWarning("I can search the API next if you want.", false), null);
+  assert.equal(detectMissingToolActivityWarning("Before I proceed, confirm the record.", false), null);
+  assert.equal(detectMissingToolActivityWarning("Proceeding with the API search now.", true), null);
+});
+
+test("detectIntentOnlyNarrationWarning flags planning text even after tool activity", () => {
+  assert.equal(
+    detectIntentOnlyNarrationWarning("I will now check the OpenAPI contract before making another request."),
+    "Assistant narrated the next action instead of producing a tool call or verified final answer."
+  );
 });
 
 test("detectUnsupportedWorkspaceAccessWarning flags unsupported workspace access claims", () => {
   const warning = detectUnsupportedWorkspaceAccessWarning([
     "Before I can do that, I must confirm the workspace has:",
     "",
-    "- `CRM_BASE_URL`",
-    "- `CRM_ACCESS_TOKEN`",
+    "- `API_BASE_URL`",
+    "- `API_ACCESS_TOKEN`",
     "",
     "These are loaded from the `.env` file.",
     "",
@@ -58,7 +67,7 @@ test("detectUnsupportedWorkspaceAccessWarning flags unsupported workspace access
 
 test("classifyMissingActionEvidenceResponse classifies retryable host guardrails", () => {
   assert.deepEqual(
-    classifyMissingActionEvidenceResponse("Great - proceeding with CRM search now.", false),
+    classifyMissingActionEvidenceResponse("Great - proceeding with API search now.", false),
     {
       classification: "intent_only_narration",
       warning: "Assistant narrated the next action without calling a tool. Retrying the turn and requiring action evidence.",
@@ -72,6 +81,17 @@ test("classifyMissingActionEvidenceResponse classifies retryable host guardrails
       classification: "non_progressing",
       warning: "Assistant claimed workspace information was unavailable without inspecting available workspace sources. Retrying the turn.",
       transientInstruction: "Do not ask the user to confirm workspace-local files, credentials, configuration, or environment variables before inspecting likely workspace sources with read-only tools. Use available workspace tools now, and report only presence, absence, or other non-sensitive metadata for secrets."
+    }
+  );
+});
+
+test("classifyIntentOnlyNarrationResponse classifies post-tool planning text", () => {
+  assert.deepEqual(
+    classifyIntentOnlyNarrationResponse("I will now check the OpenAPI contract before making another request."),
+    {
+      classification: "intent_only_narration",
+      warning: "Assistant narrated the next action instead of producing a tool call or verified final answer. Retrying the turn.",
+      transientInstruction: "Do not describe future tool actions. Use the available workspace tools now, or answer only if prior tool results already provide a verified final result."
     }
   );
 });

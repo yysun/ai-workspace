@@ -1,7 +1,7 @@
 /*
  * Feature: workspace-local .env bootstrap for runtime-visible variables.
  * Notes: reads `${WORKSPACE_ROOT}/.env` and merges variables into a target env object.
- * Recent changes: added support for workspace-scoped variables like CRM_BASE_URL.
+ * Recent changes: added support for workspace-scoped runtime variables.
  */
 
 import { readFile } from "node:fs/promises";

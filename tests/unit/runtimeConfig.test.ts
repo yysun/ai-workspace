@@ -12,6 +12,7 @@ import {
   composeSystemPrompt,
   createBuiltInSelection,
   createEnvironmentOptions,
+  createProviderConfigs,
   describeRuntimeDefaults,
   resolveMaxTokens,
   resolveRuntimeTarget,
@@ -87,6 +88,26 @@ test("resolveRuntimeTarget allows azure as the configured default provider", () 
   });
 });
 
+test("resolveRuntimeTarget allows openai-compatible as the configured default provider", () => {
+  const target = resolveRuntimeTarget({
+    model: "default",
+    messages: [],
+    stream: false,
+    workspaceRoot: "/workspace"
+  }, {
+    ...baseEnv,
+    llmProvider: "openai-compatible",
+    openAiApiKey: undefined,
+    openAiCompatibleApiKey: "compatible-key",
+    openAiCompatibleBaseUrl: "http://127.0.0.1:4010/v1"
+  });
+
+  assert.deepEqual(target, {
+    provider: "openai-compatible",
+    model: "gpt-4.1-mini"
+  });
+});
+
 test("resolveRuntimeTarget falls back to generic LLM_* provider and model defaults", () => {
   const target = resolveRuntimeTarget({
     model: "default",
@@ -129,6 +150,17 @@ test("createEnvironmentOptions loads skills from both workspace skill roots", ()
     "/workspace/skills",
     "/workspace/.agents/skills"
   ]);
+});
+
+test("createProviderConfigs includes openai-compatible configuration", () => {
+  assert.deepEqual(createProviderConfigs({
+    ...baseEnv,
+    openAiCompatibleApiKey: "compatible-key",
+    openAiCompatibleBaseUrl: "http://127.0.0.1:4010/v1"
+  })["openai-compatible"], {
+    apiKey: "compatible-key",
+    baseUrl: "http://127.0.0.1:4010/v1"
+  });
 });
 
 test("describeRuntimeDefaults reports generic LLM_* defaults for health output", () => {

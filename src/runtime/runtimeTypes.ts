@@ -41,7 +41,7 @@ export type RuntimeEvent =
   | { type: "message.delta"; text: string }
   | { type: "message.done"; message: { role: "assistant"; content: string } }
   | { type: "tool.call"; name: string; args: unknown }
-  | { type: "tool.result"; name: string; result: unknown }
+  | { type: "tool.result"; name: string; args?: unknown; result: unknown }
   | { type: "warning"; warning: string; code: "assistant_claimed_progress_without_tool_activity" }
   | { type: "error"; error: string };
 

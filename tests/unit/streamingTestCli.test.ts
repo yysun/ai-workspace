@@ -11,6 +11,7 @@ import {
   consumeAutoContinueBudget,
   commitTurn,
   extractSseEventBlocks,
+  formatToolEventLine,
   isReadlineExitError,
   parseSseEventBlock,
   resolveCliOptions,
@@ -126,7 +127,7 @@ test("applyStreamEvent assembles deltas and final completion", () => {
 
 test("applyStreamEvent collects runtime warning messages", () => {
   const updated = applyStreamEvent({
-    assistantText: "Proceeding with the CRM search now.",
+    assistantText: "Proceeding with the API search now.",
     warningMessages: [],
     isComplete: true,
     isDone: false
@@ -138,6 +139,25 @@ test("applyStreamEvent collects runtime warning messages", () => {
   assert.deepEqual(updated.warningMessages, [
     "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn."
   ]);
+});
+
+test("formatToolEventLine prints shell command and parameters", () => {
+  assert.equal(
+    formatToolEventLine("tool.result", "shell_cmd", {
+      command: "curl",
+      parameters: ["-sS", "-H", "Authorization: Bearer [redacted:$API_ACCESS_TOKEN]", "https://api.example.test/records", "--fail"],
+      directory: "tools",
+      output_format: "json"
+    }),
+    "\n[tool.result] shell_cmd command=\"curl\" args=[\"-sS\",\"-H\",\"Authorization: Bearer [redacted:$API_ACCESS_TOKEN]\",\"https://api.example.test/records\",\"--fail\"] directory=\"tools\" output_format=\"json\"\n"
+  );
+});
+
+test("formatToolEventLine prints generic tool arguments as JSON", () => {
+  assert.equal(
+    formatToolEventLine("tool.call", "web_fetch", { url: "https://example.test" }),
+    "\n[tool.call] web_fetch args={\"url\":\"https://example.test\"}\n"
+  );
 });
 
 test("commitTurn appends a complete user and assistant turn", () => {
@@ -173,13 +193,13 @@ test("commitTurn appends a complete user and assistant turn", () => {
 });
 
 test("shouldAutoContinue only triggers for planning-style assistant replies without tool activity", () => {
-  assert.equal(shouldAutoContinue("I will search the CRM and confirm the record before proceeding.", false), true);
+  assert.equal(shouldAutoContinue("I will search the API and confirm the record before proceeding.", false), true);
   assert.equal(shouldAutoContinue("Before I proceed: do you want me to continue?", false), true);
   assert.equal(shouldAutoContinue([
-    "Understood. I will search the CRM for contact Jazz Gill and confirm whether exactly one record exists.",
+    "Understood. I will search the API for the requested record and confirm whether exactly one match exists.",
     "",
-    "Proceeding with contact search now."
+    "Proceeding with record search now."
   ].join("\n"), false), true);
-  assert.equal(shouldAutoContinue("I searched the CRM and found the contact.", true), false);
+  assert.equal(shouldAutoContinue("I searched the API and found the record.", true), false);
   assert.equal(shouldAutoContinue("Here is the final answer.", false), false);
 });

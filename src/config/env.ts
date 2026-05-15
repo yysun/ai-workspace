@@ -23,9 +23,11 @@ export type EnvConfig = {
   azureOpenAiApiVersion?: string;
   googleApiKey?: string;
   anthropicApiKey?: string;
+  openAiCompatibleApiKey?: string;
+  openAiCompatibleBaseUrl?: string;
 };
 
-const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure"];
+const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
 const SUPPORTED_TOOL_PERMISSIONS: ToolPermission[] = ["auto", "ask", "read"];
 const SUPPORTED_REASONING_EFFORTS: ReasoningEffort[] = ["default", "none", "low", "medium", "high"];
 
@@ -101,6 +103,8 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     azureOpenAiDeploymentName: source.AZURE_OPENAI_DEPLOYMENT_NAME?.trim() || undefined,
     azureOpenAiApiVersion: source.AZURE_OPENAI_API_VERSION?.trim() || undefined,
     googleApiKey: source.GOOGLE_API_KEY,
-    anthropicApiKey: source.ANTHROPIC_API_KEY
+    anthropicApiKey: source.ANTHROPIC_API_KEY,
+    openAiCompatibleApiKey: source.OPENAI_COMPATIBLE_API_KEY,
+    openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined
   };
 }
