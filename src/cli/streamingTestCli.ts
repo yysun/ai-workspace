@@ -272,6 +272,19 @@ export function parsePendingHumanInputRequest(
   return normalizeHumanInputRequest(toolName, result, fallbackRequestId, true);
 }
 
+export function shouldSuppressHumanInputToolEventLine(
+  kind: "tool.call" | "tool.result",
+  toolName: string,
+  payload: unknown,
+  fallbackRequestId = ""
+): boolean {
+  if (kind === "tool.call") {
+    return parseHumanInputToolCall(toolName, payload, fallbackRequestId) !== null;
+  }
+
+  return parsePendingHumanInputRequest(toolName, payload, fallbackRequestId) !== null;
+}
+
 function humanInputRequestKey(request: PendingHumanInputRequest): string {
   const questionIds = request.questions.map((question) => question.id).join(",");
   return `${request.toolName}:${request.requestId}:${questionIds}`;
@@ -799,18 +812,21 @@ export async function streamAssistantTurn(
       sawToolActivity = true;
       const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
       if (typeof payload?.name === "string") {
+        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
         if (payload.name === "ask_user_question") {
           appendHumanInputRequest(
             humanInputRequests,
             parseHumanInputToolCall(
               payload.name,
               payload.args,
-              typeof payload.toolCallId === "string" ? payload.toolCallId : ""
+              toolCallId
             )
           );
         }
-        errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
-        output.write(`assistant> ${progress.assistantText}`);
+        if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
+          errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args), errorOutput)}`);
+          output.write(`assistant> ${progress.assistantText}`);
+        }
       }
     }
 
@@ -818,16 +834,19 @@ export async function streamAssistantTurn(
       sawToolActivity = true;
       const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
       if (typeof payload?.name === "string") {
+        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
         appendHumanInputRequest(
           humanInputRequests,
           parsePendingHumanInputRequest(
             payload.name,
             payload.result,
-            typeof payload.toolCallId === "string" ? payload.toolCallId : ""
+            toolCallId
           )
         );
-        errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
-        output.write(`assistant> ${progress.assistantText}`);
+        if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
+          errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
+          output.write(`assistant> ${progress.assistantText}`);
+        }
       }
     }
 
@@ -849,7 +868,7 @@ export async function streamAssistantTurn(
     throw new Error(progress.errorMessage);
   }
 
-  if (!progress.assistantText.trim() && !progress.isComplete) {
+  if (!progress.assistantText.trim() && !progress.isComplete && humanInputRequests.length === 0) {
     throw new Error("Stream ended before an assistant response was completed");
   }
 

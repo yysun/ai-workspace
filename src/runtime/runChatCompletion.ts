@@ -39,6 +39,7 @@ type RuntimeState = {
   messages: LLMChatMessage[];
   finalMessage?: LLMChatMessage;
   finalText: string;
+  stoppedForHumanInput: boolean;
 };
 
 const REJECTED_TEXT_RETRY_LIMIT = 2;
@@ -158,6 +159,20 @@ function safeSerializeToolResult(result: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const HUMAN_INPUT_TOOL_NAMES = new Set([
+  "ask_user_input",
+  "human_intervention_request",
+  "ask_user_question"
+]);
+
+export function isPendingHumanInputToolResult(toolName: string, result: unknown): boolean {
+  if (!HUMAN_INPUT_TOOL_NAMES.has(toolName) || !isRecord(result)) {
+    return false;
+  }
+
+  return result.pending === true && result.status === "pending";
 }
 
 function isSensitiveEnvName(name: string): boolean {
@@ -355,7 +370,8 @@ export async function* runChatCompletion(
       const result = await respondWithTools({
         initialState: {
           messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
-          finalText: ""
+          finalText: "",
+          stoppedForHumanInput: false
         },
         emptyTextRetryLimit: 0,
         rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
@@ -434,6 +450,7 @@ export async function* runChatCompletion(
         onToolCallsResponse: async ({ state, response }) => {
           const nextMessages = [...state.messages, response.assistantMessage];
           let recoveryInstruction: string | undefined;
+          let stoppedForHumanInput = false;
           pendingAssistantText = "";
 
           for (const toolCall of response.tool_calls ?? []) {
@@ -467,6 +484,10 @@ export async function* runChatCompletion(
               result: redactToolResultForEvent(toolResult)
             });
 
+            if (isPendingHumanInputToolResult(toolName, toolResult)) {
+              stoppedForHumanInput = true;
+            }
+
             const serializedResult = safeSerializeToolResult(toolResult);
             const validationArtifact = parseToolValidationFailureArtifact(serializedResult);
             if (validationArtifact) {
@@ -483,11 +504,12 @@ export async function* runChatCompletion(
           return {
             state: {
               ...state,
-              messages: nextMessages
+              messages: nextMessages,
+              stoppedForHumanInput
             },
             next: {
-              control: "continue",
-              ...(recoveryInstruction ? { transientInstruction: recoveryInstruction } : {})
+              control: stoppedForHumanInput ? "stop" : "continue",
+              ...(!stoppedForHumanInput && recoveryInstruction ? { transientInstruction: recoveryInstruction } : {})
             }
           };
         },
@@ -526,7 +548,7 @@ export async function* runChatCompletion(
             warning
           });
         }
-      } else {
+      } else if (!result.state.stoppedForHumanInput || result.reason !== "tool_calls_response") {
         eventQueue.push({
           type: "error",
           error: createRejectedTextTerminalError(result.reason)

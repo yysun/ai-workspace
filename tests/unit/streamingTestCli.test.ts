@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStreamEvent,
+  collectHumanInputAnswers,
   consumeAutoContinueBudget,
   commitTurn,
   extractSseEventBlocks,
@@ -19,8 +20,45 @@ import {
   parseHumanInputToolCall,
   parsePendingHumanInputRequest,
   resolveCliOptions,
-  shouldAutoContinue
+  shouldSuppressHumanInputToolEventLine,
+  shouldAutoContinue,
+  streamAssistantTurn
 } from "../../src/cli/streamingTestCli.js";
+
+function createWritableCapture(): {
+  output: { isTTY: false; write: (chunk: string) => boolean };
+  text: () => string;
+} {
+  let value = "";
+
+  return {
+    output: {
+      isTTY: false,
+      write(chunk: string) {
+        value += chunk;
+        return true;
+      }
+    },
+    text() {
+      return value;
+    }
+  };
+}
+
+function createSseResponse(events: Array<{ event: string; data: unknown }>): Response {
+  const body = events.map(({ event, data }) => [
+    `event: ${event}`,
+    `data: ${JSON.stringify(data)}`,
+    ""
+  ].join("\n")).join("\n");
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream"
+    }
+  });
+}
 
 test("resolveCliOptions derives baseUrl and model from args and env", () => {
   const options = resolveCliOptions([
@@ -227,6 +265,169 @@ test("parseHumanInputToolCall accepts ask_user_question as a local alias", () =>
   assert.equal(request?.type, "multiple-select");
   assert.equal(request?.allowSkip, true);
   assert.equal(request?.questions[0]?.id, "next-step");
+});
+
+test("shouldSuppressHumanInputToolEventLine hides structured human-input tool events", () => {
+  assert.equal(shouldSuppressHumanInputToolEventLine("tool.call", "ask_user_question", {
+    type: "single-select",
+    questions: [
+      {
+        header: "Entity Type",
+        id: "entity-type",
+        question: "What type of record are you looking for?",
+        options: [
+          { id: "contact", label: "Contact" }
+        ]
+      }
+    ]
+  }, "call_123"), true);
+
+  assert.equal(shouldSuppressHumanInputToolEventLine("tool.result", "ask_user_input", {
+    pending: true,
+    status: "pending",
+    requestId: "call_123",
+    type: "single-select",
+    questions: [
+      {
+        header: "Entity Type",
+        id: "entity-type",
+        question: "What type of record are you looking for?",
+        options: [
+          { id: "contact", label: "Contact" }
+        ]
+      }
+    ]
+  }, "call_123"), true);
+
+  assert.equal(shouldSuppressHumanInputToolEventLine("tool.result", "shell_cmd", {
+    stdout: "ok"
+  }), false);
+});
+
+test("Jazz Gill contact disambiguation transcript uses correct ask_user_input request and response payloads", async () => {
+  const toolArgs = {
+    questions: [
+      {
+        header: "Contact Match",
+        id: "contact_match",
+        question: "Which Jazz Gill are you looking for?",
+        options: [
+          {
+            id: "jazz-gill-1",
+            label: "Jazz Gill (Contact ID 123)",
+            description: "If this is the primary Jazz Gill you want to analyze."
+          },
+          {
+            id: "not-sure",
+            label: "Not sure / search all",
+            description: "Search across all contacts named Jazz Gill and show matches."
+          }
+        ]
+      }
+    ]
+  };
+  const pendingToolResult = {
+    ok: false,
+    pending: true,
+    status: "pending",
+    confirmed: false,
+    requestId: "call_contact_match",
+    type: "single-select",
+    allowSkip: false,
+    questions: toolArgs.questions
+  };
+  const output = createWritableCapture();
+  const errorOutput = createWritableCapture();
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "ask_user_input",
+        args: toolArgs,
+        toolCallId: "call_contact_match"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "ask_user_input",
+        args: toolArgs,
+        result: pendingToolResult,
+        toolCallId: "call_contact_match"
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    assert.equal(
+      formatToolEventLine("tool.call", "ask_user_input", toolArgs),
+      "\n[tool.call] ask_user_input args={\"questions\":[{\"header\":\"Contact Match\",\"id\":\"contact_match\",\"question\":\"Which Jazz Gill are you looking for?\",\"options\":[{\"id\":\"jazz-gill-1\",\"label\":\"Jazz Gill (Contact ID 123)\",\"description\":\"If this is the primary Jazz Gill you want to analyze.\"},{\"id\":\"not-sure\",\"label\":\"Not sure / search all\",\"description\":\"Search across all contacts named Jazz Gill and show matches.\"}]}]}\n"
+    );
+
+    assert.deepEqual(
+      parsePendingHumanInputRequest("ask_user_input", pendingToolResult, "call_contact_match"),
+      {
+        toolName: "ask_user_input",
+        requestId: "call_contact_match",
+        type: "single-select",
+        allowSkip: false,
+        questions: toolArgs.questions
+      }
+    );
+
+    const turnResult = await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1
+    }, [], "find contact Jazz Gill", output.output, errorOutput.output);
+
+    output.output.write("\n");
+
+    const answers = await collectHumanInputAnswers(turnResult.humanInputRequests, {
+      async question(query: string) {
+        output.output.write(query);
+        output.output.write("1\n");
+        return "1";
+      }
+    }, output.output);
+
+    output.output.write("[human-input] queued answer follow-up\n");
+
+    assert.equal(turnResult.assistantText, "");
+    assert.equal(turnResult.sawToolActivity, true);
+    assert.deepEqual(turnResult.warningMessages, []);
+    assert.equal(errorOutput.text(), "");
+    assert.equal(output.text(), [
+      "assistant> ",
+      "",
+      "",
+      "[ask_user_input] Contact Match",
+      "Which Jazz Gill are you looking for?",
+      "  1. Jazz Gill (Contact ID 123) [jazz-gill-1] - If this is the primary Jazz Gill you want to analyze.",
+      "  2. Not sure / search all [not-sure] - Search across all contacts named Jazz Gill and show matches.",
+      "Select an option number or id: 1",
+      "[human-input] queued answer follow-up",
+      ""
+    ].join("\n"));
+
+    assert.equal(formatHumanInputAnswerMessage(answers), [
+      "Human input response:",
+      "- Answer for request call_contact_match:",
+      "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))"
+    ].join("\n"));
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("parseHumanInputSelection supports option numbers, ids, and skippable prompts", () => {

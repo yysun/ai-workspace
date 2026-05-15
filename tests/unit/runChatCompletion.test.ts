@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isPendingHumanInputToolResult,
   prepareToolCallArguments,
   redactToolResultForEvent,
   shouldRequireActionEvidence
@@ -79,4 +80,27 @@ test("redactToolResultForEvent redacts secrets recursively and prefers longer ov
     nested: ["token [redacted:$API_TOKEN]", { stderr: "plain [redacted:$API_KEY]" }],
     count: 1
   });
+});
+
+test("isPendingHumanInputToolResult recognizes pending human-input artifacts", () => {
+  assert.equal(isPendingHumanInputToolResult("ask_user_input", {
+    pending: true,
+    status: "pending",
+    requestId: "call_123"
+  }), true);
+
+  assert.equal(isPendingHumanInputToolResult("human_intervention_request", {
+    pending: true,
+    status: "pending"
+  }), true);
+
+  assert.equal(isPendingHumanInputToolResult("ask_user_input", {
+    pending: false,
+    status: "completed"
+  }), false);
+
+  assert.equal(isPendingHumanInputToolResult("shell_cmd", {
+    pending: true,
+    status: "pending"
+  }), false);
 });
