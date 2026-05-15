@@ -37,7 +37,7 @@ test("load_skill resolves a skill from .agents/skills", async () => {
   try {
     const tools = await resolveToolsAsync({
       environment,
-      builtIns: createBuiltInSelection(baseEnv)
+      builtIns: createBuiltInSelection()
     });
 
     const result = await tools.load_skill?.execute?.({

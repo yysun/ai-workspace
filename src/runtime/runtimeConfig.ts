@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended AGENTS.md content.
- * Recent changes: switched from bespoke env-driven tool toggles and provider-specific default-model vars to generic LLM_* runtime defaults.
+ * Recent changes: delegates built-in tool selection to llm-runtime and uses generic LLM_* runtime defaults.
  */
 
 import path from "node:path";
@@ -25,7 +25,10 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Prefer workspace evidence over speculation whenever the answer depends on files, configuration, environment variables, logs, generated outputs, or repository state.",
   "For read-only tasks such as inspecting, searching, summarizing, and analyzing workspace content, proceed without asking for confirmation.",
   "Use available read-only tools before asking the user for information that may already exist in the workspace.",
+  "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, inspect the workspace and use `load_skill` when an appropriate skill is available.",
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
+  "If an external API or network lookup is required, use `shell_cmd` or `web_fetch` instead of narrating intent.",
+  "Prefer `shell_cmd` for authenticated API work or whenever workspace instructions tell you to use `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
   "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",
   "Ask for clarification only when required information is still missing after inspection or the user requests a destructive, modifying, external, or irreversible action.",
   "Do not reveal secret values unless the user explicitly asks to inspect the file contents; otherwise report only presence, absence, or other non-sensitive metadata."
@@ -154,20 +157,8 @@ export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConf
   };
 }
 
-export function createBuiltInSelection(env: EnvConfig): BuiltInToolSelection {
-  const canWrite = env.llmPermission !== "read";
-
-  return {
-    read_file: true,
-    write_file: canWrite,
-    list_files: true,
-    search_files: true,
-    load_skill: true,
-    shell_cmd: false,
-    ask_user_input: false,
-    human_intervention_request: false,
-    web_fetch: false
-  };
+export function createBuiltInSelection(): BuiltInToolSelection {
+  return true;
 }
 
 export function resolveMaxTokens(input: RunChatCompletionInput, env: EnvConfig): number | undefined {

@@ -12,6 +12,7 @@ import {
   resolveToolsAsync,
   respondWithTools,
   type LLMChatMessage,
+  type LLMEnvironment,
   type LLMResponse,
   type LLMToolDefinition,
   type TurnLoopTextResponseClassification
@@ -154,12 +155,12 @@ function safeSerializeToolResult(result: unknown): string {
   }
 }
 
-function createToolExecutionContext(input: RunChatCompletionInput, env: EnvConfig, messages: LLMChatMessage[]) {
+function createToolExecutionContext(input: RunChatCompletionInput, environment: LLMEnvironment, messages: LLMChatMessage[]) {
   return {
     workingDirectory: input.workspaceRoot,
     abortSignal: input.signal,
-    toolPermission: env.llmPermission,
-    reasoningEffort: env.llmReasoning,
+    toolPermission: environment.defaults.toolPermission,
+    reasoningEffort: environment.defaults.reasoningEffort,
     messages: messages as unknown as Array<Record<string, unknown>>
   };
 }
@@ -175,7 +176,7 @@ async function executeToolCall(
   toolName: string,
   rawArguments: string,
   input: RunChatCompletionInput,
-  env: EnvConfig,
+  environment: LLMEnvironment,
   messages: LLMChatMessage[]
 ): Promise<unknown> {
   if (!tool?.execute) {
@@ -184,7 +185,7 @@ async function executeToolCall(
 
   return await tool.execute(
     safeParseToolArguments(rawArguments),
-    createToolExecutionContext(input, env, messages)
+    createToolExecutionContext(input, environment, messages)
   );
 }
 
@@ -220,7 +221,7 @@ export async function* runChatCompletion(
 
   void (async () => {
     let restoreWorkspaceEnv: () => void = () => undefined;
-    let environment: ReturnType<typeof createLLMEnvironment> | undefined;
+    let environment: LLMEnvironment | undefined;
     let pendingAssistantText = "";
 
     try {
@@ -231,12 +232,13 @@ export async function* runChatCompletion(
       restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
 
       const agentsMd = await loadAgentsMd(input.workspaceRoot);
-      const builtIns = createBuiltInSelection(env);
+      const builtIns = createBuiltInSelection();
       const runtimeTarget = resolveRuntimeTarget(input, env);
-      environment = createLLMEnvironment(createEnvironmentOptions(env, input.workspaceRoot));
+      const requestEnvironment = createLLMEnvironment(createEnvironmentOptions(env, input.workspaceRoot));
+      environment = requestEnvironment;
 
       const resolvedTools = await resolveToolsAsync({
-        environment,
+        environment: requestEnvironment,
         builtIns
       });
       let sawToolActivity = false;
@@ -251,7 +253,7 @@ export async function* runChatCompletion(
         abortSignal: input.signal,
         modelRequest: {
           mode: "stream",
-          environment,
+          environment: requestEnvironment,
           provider: runtimeTarget.provider,
           model: runtimeTarget.model,
           temperature: resolveTemperature(input, env),
@@ -259,7 +261,9 @@ export async function* runChatCompletion(
           builtIns,
           context: {
             workingDirectory: input.workspaceRoot,
-            abortSignal: input.signal
+            abortSignal: input.signal,
+            toolPermission: requestEnvironment.defaults.toolPermission,
+            reasoningEffort: requestEnvironment.defaults.reasoningEffort
           },
           onChunk: (chunk) => {
             if (chunk.content) {
@@ -339,7 +343,7 @@ export async function* runChatCompletion(
               toolName,
               toolCall.function.arguments,
               input,
-              env,
+              requestEnvironment,
               nextMessages
             );
 

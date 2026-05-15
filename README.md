@@ -182,9 +182,10 @@ Per request, the server:
 - Workspace built-ins are provided by `llm-runtime`.
 - The server passes `WORKSPACE_ROOT` as the `workingDirectory` used for runtime tool execution.
 - The server also loads `${WORKSPACE_ROOT}/.env` before each runtime call so workspace-local variables are visible to runtime code.
-- `read_file`, `list_files`, `search_files`, and `load_skill` are enabled by default.
-- `write_file` is available when `LLM_PERMISSION` is not `read`.
-- `shell_cmd` stays disabled by server policy in v1.
+- All `llm-runtime` built-ins are enabled by default through the runtime's built-in selection contract.
+- `LLM_PERMISSION` is passed to `llm-runtime`; the server does not hide or narrow built-ins based on permission.
+
+For external API tasks, prefer `shell_cmd` when the workspace instructions or API guide require authenticated `curl` calls, and prefer `web_fetch` only for simple unauthenticated fetches.
 
 ## Environment
 
@@ -219,7 +220,7 @@ Runtime defaults:
 Workspace runtime variables:
 
 - If `${WORKSPACE_ROOT}/.env` exists, it is loaded before each chat request.
-- This is intended for workspace-local variables such as `CRM_BASE_URL` and `CRM_ACCESS_TOKEN`.
+- This is intended for workspace-local variables such as `API_BASE_URL` and `API_ACCESS_TOKEN`.
 
 ## Docker
 

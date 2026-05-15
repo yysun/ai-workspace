@@ -6,6 +6,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { BUILT_IN_TOOL_NAMES, normalizeBuiltInToolSelection } from "llm-runtime";
 import {
   buildRuntimeMessages,
   composeSystemPrompt,
@@ -111,15 +112,14 @@ test("resolveMaxTokens and resolveTemperature fall back to generic env defaults"
   assert.equal(resolveTemperature(input, baseEnv), 0.2);
 });
 
-test("createBuiltInSelection narrows write access when permission is read", () => {
-  const builtIns = createBuiltInSelection({
-    ...baseEnv,
-    llmPermission: "read"
-  }) as Exclude<ReturnType<typeof createBuiltInSelection>, boolean>;
+test("createBuiltInSelection enables all llm-runtime built-ins", () => {
+  const selection = createBuiltInSelection();
+  const normalized = normalizeBuiltInToolSelection(selection);
 
-  assert.equal(builtIns.read_file, true);
-  assert.equal(builtIns.write_file, false);
-  assert.equal(builtIns.shell_cmd, false);
+  assert.equal(selection, true);
+  for (const toolName of BUILT_IN_TOOL_NAMES) {
+    assert.equal(normalized[toolName], true);
+  }
 });
 
 test("createEnvironmentOptions loads skills from both workspace skill roots", () => {
