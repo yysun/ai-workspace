@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends AGENTS.md to the server system prompt, delegates built-ins and skills to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: forwards tool-call ids through execution context and runtime events.
+ * Recent changes: removed host-side narration regex heuristics; llm-runtime now classifies text responses structurally and the host only relays warnings/errors.
  */
 
 import {
@@ -14,8 +14,7 @@ import {
   type LLMChatMessage,
   type LLMEnvironment,
   type LLMResponse,
-  type LLMToolDefinition,
-  type TurnLoopTextResponseClassification
+  type LLMToolDefinition
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import { loadAgentsMd } from "../workspace/loadAgentsMd.js";
@@ -28,11 +27,6 @@ import {
   resolveRuntimeTarget
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
-import {
-  classifyIntentOnlyNarrationResponse,
-  classifyMissingActionEvidenceResponse,
-  detectMissingToolActivityWarning
-} from "./runtimeWarnings.js";
 import { applyWorkspaceEnv } from "../workspace/loadWorkspaceEnv.js";
 
 type RuntimeState = {
@@ -44,33 +38,9 @@ type RuntimeState = {
 
 const REJECTED_TEXT_RETRY_LIMIT = 2;
 
-export function shouldRequireActionEvidence(state: Pick<RuntimeState, "finalText">, sawToolActivity: boolean): boolean {
-  return !sawToolActivity && !state.finalText.trim();
-}
-
-function createRejectedTextRetryWarning(
-  classification: TurnLoopTextResponseClassification,
-  retryCount: number,
-  retryLimit: number
-): string | null {
-  if (retryCount >= retryLimit) {
-    return null;
-  }
-
-  if (classification === "intent_only_narration") {
-    return "Assistant narrated the next action without calling a tool. Retrying the turn and requiring action evidence.";
-  }
-
-  if (classification === "non_progressing") {
-    return "Assistant response did not make progress toward a tool action or verified final answer. Retrying the turn.";
-  }
-
-  return null;
-}
-
 function createRejectedTextTerminalError(reason: string): string {
   if (reason === "rejected_text_response") {
-    return "llm-runtime rejected repeated intent-only narration before any tool action or verified final answer was produced";
+    return "llm-runtime rejected repeated text responses without verified tool evidence or a final answer";
   }
 
   return `llm-runtime stopped without producing a final assistant message (${reason})`;
@@ -365,7 +335,6 @@ export async function* runChatCompletion(
         environment: requestEnvironment,
         builtIns
       });
-      let sawToolActivity = false;
 
       const result = await respondWithTools({
         initialState: {
@@ -413,35 +382,14 @@ export async function* runChatCompletion(
             }
           ];
         },
-        requiresActionEvidence: ({ state }) => shouldRequireActionEvidence(state, sawToolActivity),
-        classifyTextResponse: ({ responseText, requiresActionEvidence }) => {
-          const assessment = requiresActionEvidence
-            ? classifyMissingActionEvidenceResponse(responseText, sawToolActivity)
-            : classifyIntentOnlyNarrationResponse(responseText);
-          if (!assessment) {
-            return undefined;
-          }
-
-          return {
-            classification: assessment.classification,
-            transientInstruction: assessment.transientInstruction
-          };
-        },
-        onRejectedTextResponse: async ({ state, responseText, classification, retryCount }) => {
-          const actionEvidenceAssessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity)
-            ?? classifyIntentOnlyNarrationResponse(responseText);
-          const warning = actionEvidenceAssessment?.warning ?? createRejectedTextRetryWarning(
-            classification,
-            retryCount,
-            REJECTED_TEXT_RETRY_LIMIT
-          );
+        onRejectedTextResponse: async ({ state, classification, retryCount }) => {
           pendingAssistantText = "";
 
-          if (warning) {
+          if (retryCount < REJECTED_TEXT_RETRY_LIMIT) {
             eventQueue.push({
               type: "warning",
-              code: "assistant_claimed_progress_without_tool_activity",
-              warning
+              code: "assistant_text_rejected_without_evidence",
+              warning: `llm-runtime classified the assistant text as ${classification}; retrying.`
             });
           }
 
@@ -456,7 +404,6 @@ export async function* runChatCompletion(
           for (const toolCall of response.tool_calls ?? []) {
             const toolName = toolCall.function.name;
             const parsedArgs = safeParseToolArguments(toolCall.function.arguments);
-            sawToolActivity = true;
             const preparedArgs = prepareToolCallArguments(toolName, parsedArgs);
 
             eventQueue.push({
@@ -539,15 +486,6 @@ export async function* runChatCompletion(
           type: "message.done",
           message: finalMessage
         });
-
-        const warning = detectMissingToolActivityWarning(finalMessage.content, sawToolActivity);
-        if (warning) {
-          eventQueue.push({
-            type: "warning",
-            code: "assistant_claimed_progress_without_tool_activity",
-            warning
-          });
-        }
       } else if (!result.state.stoppedForHumanInput || result.reason !== "tool_calls_response") {
         eventQueue.push({
           type: "error",

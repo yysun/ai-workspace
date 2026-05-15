@@ -1,7 +1,7 @@
 /*
  * Feature: unit coverage for llm-runtime orchestration helpers.
- * Notes: verifies local guardrails around accepted text responses without calling a provider.
- * Recent changes: added coverage for post-tool action-evidence handling.
+ * Notes: verifies host-side helpers without calling a provider.
+ * Recent changes: removed host-side text-classification helpers; llm-runtime classifies text responses structurally.
  */
 
 import assert from "node:assert/strict";
@@ -9,15 +9,8 @@ import test from "node:test";
 import {
   isPendingHumanInputToolResult,
   prepareToolCallArguments,
-  redactToolResultForEvent,
-  shouldRequireActionEvidence
+  redactToolResultForEvent
 } from "../../src/runtime/runChatCompletion.js";
-
-test("shouldRequireActionEvidence stops requiring action evidence after tool activity", () => {
-  assert.equal(shouldRequireActionEvidence({ finalText: "" }, false), true);
-  assert.equal(shouldRequireActionEvidence({ finalText: "" }, true), false);
-  assert.equal(shouldRequireActionEvidence({ finalText: "Verified final answer." }, false), false);
-});
 
 test("prepareToolCallArguments expands shell env references for execution", () => {
   const prepared = prepareToolCallArguments("shell_cmd", {

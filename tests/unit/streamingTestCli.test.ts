@@ -177,11 +177,11 @@ test("applyStreamEvent collects runtime warning messages", () => {
     isDone: false
   }, {
     event: "warning",
-    data: "{\"type\":\"warning\",\"code\":\"assistant_claimed_progress_without_tool_activity\",\"warning\":\"Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn.\"}"
+    data: "{\"type\":\"warning\",\"code\":\"assistant_text_rejected_without_evidence\",\"warning\":\"llm-runtime classified the assistant text as non_progressing; retrying.\"}"
   });
 
   assert.deepEqual(updated.warningMessages, [
-    "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn."
+    "llm-runtime classified the assistant text as non_progressing; retrying."
   ]);
 });
 
