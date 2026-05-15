@@ -31,6 +31,8 @@ type RuntimeState = {
 };
 
 const REJECTED_TEXT_RETRY_LIMIT = 2;
+const DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS = 24;
+const DEFAULT_MAX_WALL_TIME_MS = 15 * 60 * 1000;
 
 function createRejectedTextTerminalError(reason: string): string {
   if (reason === "rejected_text_response") {
@@ -272,6 +274,8 @@ export async function* runChatCompletion(
       messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
       temperature: resolveTemperature(input, env),
       maxTokens: resolveMaxTokens(input, env),
+      maxConsecutiveToolTurns: env.llmMaxConsecutiveToolTurns ?? DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS,
+      maxWallTimeMs: env.llmMaxWallTimeMs ?? DEFAULT_MAX_WALL_TIME_MS,
       builtIns,
       defaultTextResponseMode: "require_tool_result",
       rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,

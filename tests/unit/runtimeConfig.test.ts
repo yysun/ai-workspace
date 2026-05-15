@@ -18,6 +18,7 @@ import {
   resolveRuntimeTarget,
   resolveTemperature
 } from "../../src/runtime/runtimeConfig.js";
+import { loadEnv } from "../../src/config/env.js";
 import type { EnvConfig } from "../../src/config/env.js";
 
 const baseEnv: EnvConfig = {
@@ -172,4 +173,14 @@ test("describeRuntimeDefaults reports generic LLM_* defaults for health output",
     permission: "auto",
     reasoning: "medium"
   });
+});
+
+test("loadEnv parses LLM_MAX_WALL_TIME_MS as a positive integer override", () => {
+  const env = loadEnv({
+    PORT: "3000",
+    WORKSPACE_ROOT: "/workspace",
+    LLM_MAX_WALL_TIME_MS: "900000"
+  });
+
+  assert.equal(env.llmMaxWallTimeMs, 900000);
 });

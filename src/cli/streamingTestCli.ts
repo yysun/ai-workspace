@@ -591,6 +591,54 @@ function formatGenericToolArgs(args: Record<string, unknown>): string {
   return parts.length > 0 ? `\n${parts.join("\n")}` : "";
 }
 
+function formatMultilineStringPreview(label: string, value: string, maxLength = 400): string {
+  const preview = value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+  return `  ${label}: ${JSON.stringify(preview)}`;
+}
+
+function formatShellCommandResult(result: unknown): string {
+  const parsedResult = parseJsonRecord(result);
+  if (!parsedResult) {
+    if (typeof result === "string") {
+      return `\n${formatMultilineStringPreview("result", result)}`;
+    }
+
+    return formatGenericToolArgs({ result: result ?? null });
+  }
+
+  const lines: string[] = [];
+  for (const field of ["exit_code", "aborted", "timed_out", "duration_ms", "signal"]) {
+    if (parsedResult[field] !== undefined) {
+      const serializedValue = stringifyForDisplay(parsedResult[field]);
+      if (serializedValue) {
+        lines.push(`  ${field}: ${serializedValue}`);
+      }
+    }
+  }
+
+  if (typeof parsedResult.stdout === "string") {
+    lines.push(formatMultilineStringPreview("stdout", parsedResult.stdout));
+  }
+
+  if (typeof parsedResult.stderr === "string" && parsedResult.stderr) {
+    lines.push(formatMultilineStringPreview("stderr", parsedResult.stderr));
+  }
+
+  return lines.length > 0 ? `\n${lines.join("\n")}` : "";
+}
+
+function formatGenericToolResult(result: unknown): string {
+  if (isRecord(result)) {
+    return formatGenericToolArgs(result);
+  }
+
+  if (typeof result === "string") {
+    return `\n${formatMultilineStringPreview("result", result)}`;
+  }
+
+  return formatGenericToolArgs({ result: result ?? null });
+}
+
 export function formatToolArgsForDisplay(toolName: string, args: unknown): string {
   if (!isRecord(args)) {
     return "";
@@ -603,8 +651,20 @@ export function formatToolArgsForDisplay(toolName: string, args: unknown): strin
   return formatGenericToolArgs(args);
 }
 
+export function formatToolResultForDisplay(toolName: string, result: unknown): string {
+  if (toolName === "shell_cmd") {
+    return formatShellCommandResult(result);
+  }
+
+  return formatGenericToolResult(result);
+}
+
 export function formatToolEventLine(kind: "tool.call" | "tool.result", name: string, args: unknown): string {
   return `\n[${kind}] ${name}${formatToolArgsForDisplay(name, args)}\n`;
+}
+
+export function formatToolResultEventLine(name: string, result: unknown): string {
+  return `\n[tool.result] ${name}${formatToolResultForDisplay(name, result)}\n`;
 }
 
 export function isReadlineExitError(error: unknown): boolean {
@@ -1040,7 +1100,7 @@ export async function streamAssistantTurn(
           );
           if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
             assistantDisplay.clearPending();
-            errorOutput.write(`${formatGray(formatToolEventLine("tool.result", payload.name, payload.args), errorOutput)}`);
+            errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result), errorOutput)}`);
             assistantDisplay.resumeAfterInterruption(progress.assistantText);
           }
         }
