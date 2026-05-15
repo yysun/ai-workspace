@@ -35,9 +35,16 @@ export type StreamTurnResult = {
   warningMessages: string[];
 };
 
+export type AutoContinueBudget = {
+  remainingAutoTurns: number;
+  remainingWarningGraceTurns: number;
+};
+
 type WritableLike = Pick<NodeJS.WriteStream, "write"> & {
   isTTY?: boolean;
 };
+
+const WARNING_AUTO_CONTINUE_GRACE_TURNS = 2;
 
 function readFlagValue(args: string[], flagName: string): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
@@ -79,11 +86,11 @@ function formatGray(text: string, output: WritableLike): string {
   return output.isTTY ? `\u001b[90m${text}\u001b[0m` : text;
 }
 
-function isReadlineClosedError(error: unknown): boolean {
+export function isReadlineExitError(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
     && "code" in error
-    && (error as { code?: unknown }).code === "ERR_USE_AFTER_CLOSE";
+    && ["ERR_USE_AFTER_CLOSE", "ABORT_ERR"].includes(String((error as { code?: unknown }).code));
 }
 
 export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOptions {
@@ -319,6 +326,28 @@ export function shouldAutoContinue(assistantText: string, sawToolActivity: boole
     || /\?$/.test(normalizedText);
 }
 
+export function consumeAutoContinueBudget(
+  remainingAutoTurns: number,
+  remainingWarningGraceTurns: number,
+  warningMessages: string[]
+): AutoContinueBudget | null {
+  if (remainingAutoTurns > 0) {
+    return {
+      remainingAutoTurns: remainingAutoTurns - 1,
+      remainingWarningGraceTurns
+    };
+  }
+
+  if (warningMessages.length > 0 && remainingWarningGraceTurns > 0) {
+    return {
+      remainingAutoTurns,
+      remainingWarningGraceTurns: remainingWarningGraceTurns - 1
+    };
+  }
+
+  return null;
+}
+
 export async function streamAssistantTurn(
   options: CliOptions,
   history: ChatMessage[],
@@ -438,7 +467,8 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
       try {
         input = (await readline.question("you> ")).trim();
       } catch (error) {
-        if (isReadlineClosedError(error)) {
+        if (isReadlineExitError(error)) {
+          stdout.write("\n");
           break;
         }
 
@@ -462,21 +492,28 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
       try {
         let nextInput = input;
         let remainingAutoTurns = options.autoContinue ? options.autoContinueTurns : 0;
+        let remainingWarningGraceTurns = options.autoContinue ? WARNING_AUTO_CONTINUE_GRACE_TURNS : 0;
 
         while (true) {
           const result = await streamAssistantTurn(options, history, nextInput, stdout, stderr);
           history = commitTurn(history, nextInput, result.assistantText);
           stdout.write("\n");
 
-          if (
-            result.warningMessages.length > 0
-            || remainingAutoTurns < 1
-            || !shouldAutoContinue(result.assistantText, result.sawToolActivity)
-          ) {
+          if (!shouldAutoContinue(result.assistantText, result.sawToolActivity)) {
             break;
           }
 
-          remainingAutoTurns -= 1;
+          const nextBudget = consumeAutoContinueBudget(
+            remainingAutoTurns,
+            remainingWarningGraceTurns,
+            result.warningMessages
+          );
+          if (!nextBudget) {
+            break;
+          }
+
+          remainingAutoTurns = nextBudget.remainingAutoTurns;
+          remainingWarningGraceTurns = nextBudget.remainingWarningGraceTurns;
           nextInput = options.autoContinueMessage;
           stdout.write(formatGray(`[auto] you> ${nextInput}\n`, stdout));
         }

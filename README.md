@@ -113,7 +113,7 @@ npm run chat:cli -- --auto-continue --auto-continue-message "go ahead" --auto-co
 
 The CLI sends `stream: true` requests to `/chat/completions`, prints assistant output as SSE deltas arrive, and keeps the full conversation in memory for the life of the process. Tool-call, tool-result, and warning lines are shown in gray in TTY terminals. Use `/clear` to reset history and `/exit` to quit.
 
-When `--auto-continue` is enabled, the CLI can automatically submit a bounded follow-up message after a planning-style assistant reply that says things like `I will ...` or asks to proceed. This is useful for quick experiments, but it stays opt-in because it can otherwise mask places where the model should have called a tool directly. If the runtime emits a warning that the assistant claimed it was already proceeding without any tool activity, the CLI stops auto-continue for that turn so the mismatch stays visible.
+When `--auto-continue` is enabled, the CLI can automatically submit a bounded follow-up message after a planning-style assistant reply that says things like `I will ...` or asks to proceed. This is useful for quick experiments, but it stays opt-in because it can otherwise mask places where the model should have called a tool directly. Warning lines are still shown when the runtime detects narrated progress without tool activity, and the CLI allows a small bounded grace window for those warning-only stalls before it stops auto-continuing.
 
 ## Mount a workspace
 
@@ -182,7 +182,7 @@ Per request, the server:
 - Workspace built-ins are provided by `llm-runtime`.
 - The server passes `WORKSPACE_ROOT` as the `workingDirectory` used for runtime tool execution.
 - The server also loads `${WORKSPACE_ROOT}/.env` before each runtime call so workspace-local variables are visible to runtime code.
-- `read_file`, `list_files`, `grep`, and `load_skill` are enabled by default.
+- `read_file`, `list_files`, `search_files`, and `load_skill` are enabled by default.
 - `write_file` is available when `LLM_PERMISSION` is not `read`.
 - `shell_cmd` stays disabled by server policy in v1.
 

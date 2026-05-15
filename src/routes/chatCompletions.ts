@@ -81,7 +81,7 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
     }
   }
 
-  const content = finalContent ?? assistantContent;
+  const content = finalContent ?? (!errorMessage ? assistantContent : "");
   if (!content && errorMessage) {
     return {
       statusCode: 500,

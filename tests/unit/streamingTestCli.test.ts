@@ -8,8 +8,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStreamEvent,
+  consumeAutoContinueBudget,
   commitTurn,
   extractSseEventBlocks,
+  isReadlineExitError,
   parseSseEventBlock,
   resolveCliOptions,
   shouldAutoContinue
@@ -50,6 +52,29 @@ test("resolveCliOptions falls back to default auto-continue settings", () => {
     autoContinueMessage: "go ahead",
     autoContinueTurns: 1
   });
+});
+
+test("consumeAutoContinueBudget uses warning grace turns after normal auto turns are exhausted", () => {
+  assert.deepEqual(consumeAutoContinueBudget(1, 2, []), {
+    remainingAutoTurns: 0,
+    remainingWarningGraceTurns: 2
+  });
+
+  assert.deepEqual(consumeAutoContinueBudget(0, 2, [
+    "Assistant claimed it was already proceeding, but no tool.call or tool.result events occurred in this turn."
+  ]), {
+    remainingAutoTurns: 0,
+    remainingWarningGraceTurns: 1
+  });
+
+  assert.equal(consumeAutoContinueBudget(0, 0, ["warning"]), null);
+  assert.equal(consumeAutoContinueBudget(0, 2, []), null);
+});
+
+test("isReadlineExitError treats closed and aborted prompts as clean exits", () => {
+  assert.equal(isReadlineExitError({ code: "ERR_USE_AFTER_CLOSE" }), true);
+  assert.equal(isReadlineExitError({ code: "ABORT_ERR" }), true);
+  assert.equal(isReadlineExitError({ code: "SOMETHING_ELSE" }), false);
 });
 
 test("extractSseEventBlocks returns completed frames and preserves remainder", () => {
@@ -150,6 +175,11 @@ test("commitTurn appends a complete user and assistant turn", () => {
 test("shouldAutoContinue only triggers for planning-style assistant replies without tool activity", () => {
   assert.equal(shouldAutoContinue("I will search the CRM and confirm the record before proceeding.", false), true);
   assert.equal(shouldAutoContinue("Before I proceed: do you want me to continue?", false), true);
+  assert.equal(shouldAutoContinue([
+    "Understood. I will search the CRM for contact Jazz Gill and confirm whether exactly one record exists.",
+    "",
+    "Proceeding with contact search now."
+  ].join("\n"), false), true);
   assert.equal(shouldAutoContinue("I searched the CRM and found the contact.", true), false);
   assert.equal(shouldAutoContinue("Here is the final answer.", false), false);
 });

@@ -34,6 +34,8 @@ test("composeSystemPrompt appends AGENTS.md content to the default system prompt
   const prompt = composeSystemPrompt("Always cite the workspace policy.");
 
   assert.match(prompt, /You are a workspace agent running inside ai-workspace\./);
+  assert.match(prompt, /Prefer workspace evidence over speculation/);
+  assert.match(prompt, /Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable\./);
   assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
 });
 

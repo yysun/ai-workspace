@@ -10,7 +10,7 @@ import test from "node:test";
 import { buildRuntimeMessages } from "../../src/runtime/runtimeConfig.js";
 import { loadAgentsMd } from "../../src/workspace/loadAgentsMd.js";
 
-const workspaceRoot = fileURLToPath(new URL("../../workspace", import.meta.url));
+const workspaceRoot = fileURLToPath(new URL("../fixtures/workspace", import.meta.url));
 
 test("loadAgentsMd reads workspace AGENTS.md into the runtime system prompt", async () => {
   const agentsMd = await loadAgentsMd(workspaceRoot);

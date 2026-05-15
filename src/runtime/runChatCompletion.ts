@@ -13,7 +13,8 @@ import {
   respondWithTools,
   type LLMChatMessage,
   type LLMResponse,
-  type LLMToolDefinition
+  type LLMToolDefinition,
+  type TurnLoopTextResponseClassification
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import { loadAgentsMd } from "../workspace/loadAgentsMd.js";
@@ -26,7 +27,10 @@ import {
   resolveRuntimeTarget
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
-import { detectMissingToolActivityWarning } from "./runtimeWarnings.js";
+import {
+  classifyMissingActionEvidenceResponse,
+  detectMissingToolActivityWarning
+} from "./runtimeWarnings.js";
 import { applyWorkspaceEnv } from "../workspace/loadWorkspaceEnv.js";
 
 type RuntimeState = {
@@ -34,6 +38,40 @@ type RuntimeState = {
   finalMessage?: LLMChatMessage;
   finalText: string;
 };
+
+const REJECTED_TEXT_RETRY_LIMIT = 2;
+
+function shouldRequireActionEvidence(state: RuntimeState): boolean {
+  return !state.finalText.trim();
+}
+
+function createRejectedTextRetryWarning(
+  classification: TurnLoopTextResponseClassification,
+  retryCount: number,
+  retryLimit: number
+): string | null {
+  if (retryCount >= retryLimit) {
+    return null;
+  }
+
+  if (classification === "intent_only_narration") {
+    return "Assistant narrated the next action without calling a tool. Retrying the turn and requiring action evidence.";
+  }
+
+  if (classification === "non_progressing") {
+    return "Assistant response did not make progress toward a tool action or verified final answer. Retrying the turn.";
+  }
+
+  return null;
+}
+
+function createRejectedTextTerminalError(reason: string): string {
+  if (reason === "rejected_text_response") {
+    return "llm-runtime rejected repeated intent-only narration before any tool action or verified final answer was produced";
+  }
+
+  return `llm-runtime stopped without producing a final assistant message (${reason})`;
+}
 
 type AsyncEventQueue<T> = {
   push: (value: T) => void;
@@ -150,13 +188,17 @@ async function executeToolCall(
   );
 }
 
-function extractFinalMessage(result: { state: RuntimeState; response: LLMResponse | null }): { role: "assistant"; content: string } | null {
+function extractFinalMessage(result: { state: RuntimeState; response: LLMResponse | null; reason: string }): { role: "assistant"; content: string } | null {
   const stateMessage = result.state.finalMessage;
   if (stateMessage) {
     return {
       role: "assistant",
       content: result.state.finalText || stateMessage.content
     };
+  }
+
+  if (result.reason !== "text_response") {
+    return null;
   }
 
   const responseMessage = result.response?.assistantMessage;
@@ -179,6 +221,7 @@ export async function* runChatCompletion(
   void (async () => {
     let restoreWorkspaceEnv: () => void = () => undefined;
     let environment: ReturnType<typeof createLLMEnvironment> | undefined;
+    let pendingAssistantText = "";
 
     try {
       const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
@@ -204,7 +247,7 @@ export async function* runChatCompletion(
           finalText: ""
         },
         emptyTextRetryLimit: 0,
-        rejectedTextRetryLimit: 1,
+        rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
         abortSignal: input.signal,
         modelRequest: {
           mode: "stream",
@@ -220,12 +263,12 @@ export async function* runChatCompletion(
           },
           onChunk: (chunk) => {
             if (chunk.content) {
-              eventQueue.push({
-                type: "message.delta",
-                text: chunk.content
-              });
+              pendingAssistantText += chunk.content;
             }
           }
+        },
+        onIterationStart: () => {
+          pendingAssistantText = "";
         },
         buildMessages: async ({ state, transientInstruction }) => {
           if (!transientInstruction) {
@@ -240,9 +283,45 @@ export async function* runChatCompletion(
             }
           ];
         },
+        requiresActionEvidence: ({ state }) => shouldRequireActionEvidence(state),
+        classifyTextResponse: ({ responseText, requiresActionEvidence }) => {
+          if (!requiresActionEvidence) {
+            return undefined;
+          }
+
+          const assessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity);
+          if (!assessment) {
+            return undefined;
+          }
+
+          return {
+            classification: assessment.classification,
+            transientInstruction: assessment.transientInstruction
+          };
+        },
+        onRejectedTextResponse: async ({ state, responseText, classification, retryCount }) => {
+          const actionEvidenceAssessment = classifyMissingActionEvidenceResponse(responseText, sawToolActivity);
+          const warning = actionEvidenceAssessment?.warning ?? createRejectedTextRetryWarning(
+            classification,
+            retryCount,
+            REJECTED_TEXT_RETRY_LIMIT
+          );
+          pendingAssistantText = "";
+
+          if (warning) {
+            eventQueue.push({
+              type: "warning",
+              code: "assistant_claimed_progress_without_tool_activity",
+              warning
+            });
+          }
+
+          return { state };
+        },
         onToolCallsResponse: async ({ state, response }) => {
           const nextMessages = [...state.messages, response.assistantMessage];
           let recoveryInstruction: string | undefined;
+          pendingAssistantText = "";
 
           for (const toolCall of response.tool_calls ?? []) {
             const toolName = toolCall.function.name;
@@ -294,14 +373,24 @@ export async function* runChatCompletion(
             }
           };
         },
-        onTextResponse: async ({ state, response, responseText }) => ({
-          state: {
-            ...state,
-            messages: [...state.messages, response.assistantMessage],
-            finalMessage: response.assistantMessage,
-            finalText: responseText
+        onTextResponse: async ({ state, response, responseText }) => {
+          if (input.stream && responseText) {
+            eventQueue.push({
+              type: "message.delta",
+              text: responseText
+            });
           }
-        })
+          pendingAssistantText = "";
+
+          return {
+            state: {
+              ...state,
+              messages: [...state.messages, response.assistantMessage],
+              finalMessage: response.assistantMessage,
+              finalText: responseText
+            }
+          };
+        }
       });
 
       const finalMessage = extractFinalMessage(result);
@@ -322,7 +411,7 @@ export async function* runChatCompletion(
       } else {
         eventQueue.push({
           type: "error",
-          error: `llm-runtime stopped without producing a final assistant message (${result.reason})`
+          error: createRejectedTextTerminalError(result.reason)
         });
       }
     } catch (error) {

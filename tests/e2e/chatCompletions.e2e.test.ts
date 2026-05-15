@@ -14,7 +14,7 @@ import type { EnvConfig } from "../../src/config/env.js";
 
 const envWithoutProviderCredentials: EnvConfig = {
   port: 0,
-  workspaceRoot: new URL("../../workspace", import.meta.url).pathname,
+  workspaceRoot: new URL("../fixtures/workspace", import.meta.url).pathname,
   llmPermission: "auto",
   llmReasoning: "medium"
 };

@@ -22,8 +22,13 @@ const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google",
 const DEFAULT_SYSTEM_PROMPT = [
   "You are a workspace agent running inside ai-workspace.",
   "Help the user by inspecting the workspace, using available tools when needed, and answering from the files and context you can access.",
+  "Prefer workspace evidence over speculation whenever the answer depends on files, configuration, environment variables, logs, generated outputs, or repository state.",
   "For read-only tasks such as inspecting, searching, summarizing, and analyzing workspace content, proceed without asking for confirmation.",
-  "Ask for clarification only when required information is missing or the user requests a destructive, modifying, external, or irreversible action."
+  "Use available read-only tools before asking the user for information that may already exist in the workspace.",
+  "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
+  "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",
+  "Ask for clarification only when required information is still missing after inspection or the user requests a destructive, modifying, external, or irreversible action.",
+  "Do not reveal secret values unless the user explicitly asks to inspect the file contents; otherwise report only presence, absence, or other non-sensitive metadata."
 ].join(" ");
 
 function isProviderName(value: string): value is LLMProviderName {
@@ -156,7 +161,7 @@ export function createBuiltInSelection(env: EnvConfig): BuiltInToolSelection {
     read_file: true,
     write_file: canWrite,
     list_files: true,
-    grep: true,
+    search_files: true,
     load_skill: true,
     shell_cmd: false,
     ask_user_input: false,
