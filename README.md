@@ -196,7 +196,9 @@ Per request, the server:
 - All `llm-runtime` built-ins are enabled by default through the runtime's built-in selection contract.
 - `LLM_PERMISSION` is passed to `llm-runtime`; the server does not hide or narrow built-ins based on permission.
 
-For external API tasks, prefer `shell_cmd` when the workspace instructions or API guide require authenticated `curl` calls, and prefer `web_fetch` only for simple unauthenticated fetches.
+When `${WORKSPACE_ROOT}/.env` defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, and observable tool events redact configured secrets.
+
+For external API tasks, prefer `api_request` for the configured workspace API surface, prefer `shell_cmd` when the workspace instructions or API guide explicitly require authenticated `curl` calls, and prefer `web_fetch` only for simple unauthenticated fetches.
 
 ## Environment
 
@@ -219,6 +221,11 @@ Supported variables:
 - `ANTHROPIC_API_KEY`
 - `OPENAI_COMPATIBLE_API_KEY`
 - `OPENAI_COMPATIBLE_BASE_URL`
+- `API_BASE_URL` in `${WORKSPACE_ROOT}/.env` to enable the `api_request` tool
+- `API_ACCESS_TOKEN` in `${WORKSPACE_ROOT}/.env` for host-applied auth
+- `API_AUTH_SCHEME` in `${WORKSPACE_ROOT}/.env` to override the default `Bearer` auth scheme
+- `API_SECURITY_CONTEXT` in `${WORKSPACE_ROOT}/.env` for a host-applied security context value
+- `API_SECURITY_CONTEXT_HEADER` in `${WORKSPACE_ROOT}/.env` to override the default `X-Security-Context` header name
 
 Runtime defaults:
 
@@ -235,6 +242,7 @@ Workspace runtime variables:
 
 - If `${WORKSPACE_ROOT}/.env` exists, it is loaded before each chat request.
 - This is intended for workspace-local variables such as `API_BASE_URL` and `API_ACCESS_TOKEN`.
+- When `API_BASE_URL` is present, the runtime registers `api_request` and constrains it to paths under that base URL.
 
 ## Docker
 

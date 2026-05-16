@@ -75,6 +75,22 @@ test("redactToolResultForEvent redacts secrets recursively and prefers longer ov
   });
 });
 
+test("redactToolResultForEvent redacts security context values", () => {
+  assert.deepEqual(redactToolResultForEvent({
+    headers: {
+      "x-security-context": "tenant-secret"
+    },
+    body: "tenant-secret"
+  }, {
+    API_SECURITY_CONTEXT: "tenant-secret"
+  }), {
+    headers: {
+      "x-security-context": "[redacted:$API_SECURITY_CONTEXT]"
+    },
+    body: "[redacted:$API_SECURITY_CONTEXT]"
+  });
+});
+
 test("isPendingHumanInputToolResult recognizes pending human-input artifacts", () => {
   assert.equal(isPendingHumanInputToolResult("ask_user_input", {
     pending: true,

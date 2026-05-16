@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
- * Notes: appends AGENTS.md to the server system prompt, delegates built-ins and skills to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: removed host-side narration regex heuristics; llm-runtime now classifies text responses structurally and the host only relays warnings/errors.
+ * Notes: appends AGENTS.md to the server system prompt, delegates built-ins, skills, and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
+ * Recent changes: added workspace-configured api_request tool registration and request-scoped env snapshots for tool execution and redaction.
  */
 
 import {
@@ -11,6 +11,7 @@ import {
   type LLMToolCall
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
+import { createApiRequestTool } from "../tools/apiRequestTool.js";
 import { loadAgentsMd } from "../workspace/loadAgentsMd.js";
 import {
   buildRuntimeMessages,
@@ -142,7 +143,7 @@ export function isPendingHumanInputToolResult(toolName: string, result: unknown)
 }
 
 function isSensitiveEnvName(name: string): boolean {
-  return /(^|_)(AUTH|BEARER|CREDENTIAL|KEY|PASS|PASSWORD|SECRET|TOKEN)(_|$)/i.test(name);
+  return /(^|_)(AUTH|BEARER|CREDENTIAL|KEY|PASS|PASSWORD|SECRET|TOKEN|SECURITY_CONTEXT)(_|$)/i.test(name);
 }
 
 function redactKnownSecretValues(value: string, envSource: NodeJS.ProcessEnv): string {
@@ -262,11 +263,14 @@ export async function* runChatCompletion(
       override: true
     });
     restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
+    const requestEnv = { ...process.env };
 
     const agentsMd = await loadAgentsMd(input.workspaceRoot);
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
+    const apiRequestTool = createApiRequestTool({ envSource: requestEnv });
+    const extraTools = apiRequestTool ? [apiRequestTool] : undefined;
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -277,6 +281,7 @@ export async function* runChatCompletion(
       maxConsecutiveToolTurns: env.llmMaxConsecutiveToolTurns ?? DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS,
       maxWallTimeMs: env.llmMaxWallTimeMs ?? DEFAULT_MAX_WALL_TIME_MS,
       builtIns,
+      extraTools,
       defaultTextResponseMode: "require_tool_result",
       rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
       context: {
@@ -292,7 +297,11 @@ export async function* runChatCompletion(
             continue;
           }
 
-          const preparedArgs = parseToolCallEventArgs(toolCall);
+          const preparedArgs = prepareToolCallArguments(
+            toolCall.function.name,
+            safeParseToolArguments(toolCall.function.arguments),
+            requestEnv
+          );
           yield {
             type: "tool.call",
             name: toolCall.function.name,
@@ -310,7 +319,11 @@ export async function* runChatCompletion(
       }
 
       if (event.type === "tool_start") {
-        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        const preparedArgs = prepareToolCallArguments(
+          event.toolCall.function.name,
+          safeParseToolArguments(event.toolCall.function.arguments),
+          requestEnv
+        );
         yield {
           type: "tool.call",
           name: event.toolCall.function.name,
@@ -320,18 +333,26 @@ export async function* runChatCompletion(
       }
 
       if (event.type === "tool_result") {
-        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        const preparedArgs = prepareToolCallArguments(
+          event.toolCall.function.name,
+          safeParseToolArguments(event.toolCall.function.arguments),
+          requestEnv
+        );
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,
           args: preparedArgs.eventArgs,
           toolCallId: event.toolCall.id,
-          result: redactToolResultForEvent(event.result)
+          result: redactToolResultForEvent(event.result, requestEnv)
         };
       }
 
       if (event.type === "tool_error") {
-        const preparedArgs = parseToolCallEventArgs(event.toolCall);
+        const preparedArgs = prepareToolCallArguments(
+          event.toolCall.function.name,
+          safeParseToolArguments(event.toolCall.function.arguments),
+          requestEnv
+        );
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,
