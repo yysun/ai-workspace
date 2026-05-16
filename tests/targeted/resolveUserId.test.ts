@@ -138,3 +138,105 @@ test("resolveUserId throws UserIdResolutionError on network error", async () => 
     (err) => err instanceof UserIdResolutionError
   );
 });
+
+test("resolveUserId returns id from { id: number } format", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ id: 42 }));
+  });
+
+  try {
+    const userId = await resolveUserId("mytoken", url);
+    assert.equal(userId, "42");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId returns userId from { userId: number } format", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ userId: 7 }));
+  });
+
+  try {
+    const userId = await resolveUserId("mytoken", url);
+    assert.equal(userId, "7");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId returns userId from { userId: string } format", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ userId: "user-5" }));
+  });
+
+  try {
+    const userId = await resolveUserId("mytoken", url);
+    assert.equal(userId, "user-5");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId returns userId from array format [{ userId: number }]", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify([{ userId: 3 }]));
+  });
+
+  try {
+    const userId = await resolveUserId("mytoken", url);
+    assert.equal(userId, "3");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId returns userId from array format [{ userId: string }]", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify([{ userId: "user-7" }]));
+  });
+
+  try {
+    const userId = await resolveUserId("mytoken", url);
+    assert.equal(userId, "user-7");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId throws UserIdResolutionError when array has no userId", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify([{ name: "someone" }]));
+  });
+
+  try {
+    await assert.rejects(
+      () => resolveUserId("token", url),
+      (err) => err instanceof UserIdResolutionError
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("resolveUserId throws UserIdResolutionError when array is empty", async () => {
+  const { server, url } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify([]));
+  });
+
+  try {
+    await assert.rejects(
+      () => resolveUserId("token", url),
+      (err) => err instanceof UserIdResolutionError
+    );
+  } finally {
+    await closeServer(server);
+  }
+});

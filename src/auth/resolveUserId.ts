@@ -1,6 +1,6 @@
 /*
  * Feature: user ID resolution via a configurable identity API for multi-user workspace routing.
- * Notes: exchanges a Bearer access token for a user ID by calling AUTH_USER_URL. Expects JSON { id: string }.
+ * Notes: exchanges a Bearer access token for a user ID by calling AUTH_USER_URL. Accepts { id }, { userId }, or [{ userId }] responses.
  * Recent changes: initial implementation for multi-user chat support.
  */
 
@@ -40,14 +40,27 @@ export async function resolveUserId(token: string, authUserUrl: string): Promise
     throw new UserIdResolutionError("User identity API returned non-JSON response");
   }
 
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    typeof (body as Record<string, unknown>).id !== "string" ||
-    !(body as Record<string, unknown>).id
-  ) {
-    throw new UserIdResolutionError("User identity API response missing or empty 'id' field");
+  function extractId(obj: Record<string, unknown>): string | null {
+    for (const key of ["id", "userId"]) {
+      const val = obj[key];
+      if (val !== undefined && val !== null && val !== "") {
+        return String(val);
+      }
+    }
+    return null;
   }
 
-  return (body as Record<string, unknown>).id as string;
+  // Support { id } or { userId } object format
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const uid = extractId(body as Record<string, unknown>);
+    if (uid) return uid;
+  }
+
+  // Support [{ userId } | { id }] array format
+  if (Array.isArray(body) && body.length > 0) {
+    const uid = extractId(body[0] as Record<string, unknown>);
+    if (uid) return uid;
+  }
+
+  throw new UserIdResolutionError("User identity API response missing or empty user ID field");
 }
