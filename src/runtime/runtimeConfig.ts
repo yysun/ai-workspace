@@ -174,7 +174,7 @@ export function createBuiltInSelection(): BuiltInToolSelection {
   return {
     shell_cmd: true,
     web_fetch: false,
-    load_skill: false,
+    load_skill: true,
     ask_user_input: true,
     read_file: true,
     write_file: true,

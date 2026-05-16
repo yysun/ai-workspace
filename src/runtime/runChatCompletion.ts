@@ -276,6 +276,11 @@ export async function* runChatCompletion(
     const apiRequestTool = createApiRequestTool({ envSource: requestEnv });
     const extraTools = apiRequestTool ? [apiRequestTool] : undefined;
 
+    const skills = await environment.skillRegistry.listSkills();
+    const skillRoots = environment.skillRegistry.getRoots();
+    // console.log(`[skills] roots: ${skillRoots.join(", ") || "(none)"}`);
+    console.log(`[skills] found: ${skills.map((s) => s.skillId).join(", ") || "(none)"}`);
+
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
       model: runtimeTarget.model,
