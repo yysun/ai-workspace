@@ -130,12 +130,14 @@ export function createProviderConfigs(env: EnvConfig): LLMProviderConfigs {
   };
 }
 
+// import.meta.dirname = dist/runtime/ (prod) or src/runtime/ (dev); two levels up = package root
+const PACKAGE_ROOT = path.resolve(import.meta.dirname, "../..");
+
 export function createEnvironmentOptions(env: EnvConfig, workspaceRoot: string): LLMEnvironmentOptions {
   return {
     providers: createProviderConfigs(env),
     skillRoots: [
-      path.join(workspaceRoot, "skills"),
-      path.join(workspaceRoot, ".agents", "skills")
+      path.join(PACKAGE_ROOT, "skills")
     ],
     defaults: {
       reasoningEffort: env.llmReasoning,

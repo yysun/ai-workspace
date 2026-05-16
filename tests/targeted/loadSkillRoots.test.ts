@@ -1,13 +1,10 @@
 /*
- * Feature: targeted tests for workspace skill-root discovery.
- * Notes: verifies llm-runtime can load a skill from the hidden .agents/skills workspace root.
- * Recent changes: added regression coverage for dual skill-root support.
+ * Feature: targeted tests for package-bundled skill discovery.
+ * Notes: verifies llm-runtime can load a skill from the package root skills/ directory.
+ * Recent changes: updated to reflect removal of workspace-mounted skill roots; only PACKAGE_ROOT/skills is now registered.
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import test from "node:test";
 import { createRuntime, resolveToolsAsync } from "llm-runtime";
 import type { EnvConfig } from "../../src/config/env.js";
@@ -20,19 +17,8 @@ const baseEnv: EnvConfig = {
   llmReasoning: "medium"
 };
 
-test("load_skill resolves a skill from .agents/skills", async () => {
-  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "ai-workspace-skill-roots-"));
-  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "api-lookup");
-  await mkdir(skillRoot, { recursive: true });
-  await writeFile(path.join(skillRoot, "SKILL.md"), [
-    "---",
-    "name: api-lookup",
-    "description: Resolve API lookups.",
-    "---",
-    "Use this skill to resolve API records from the hidden workspace skill root."
-  ].join("\n"));
-
-  const environment = createRuntime(createEnvironmentOptions(baseEnv, workspaceRoot));
+test("load_skill resolves a skill from the package root skills/ directory", async () => {
+  const environment = createRuntime(createEnvironmentOptions(baseEnv, "/workspace"));
 
   try {
     const tools = await resolveToolsAsync({
@@ -41,16 +27,14 @@ test("load_skill resolves a skill from .agents/skills", async () => {
     });
 
     const result = await tools.load_skill?.execute?.({
-      skill_id: "api-lookup"
+      skill_id: "crm-skill"
     });
 
     assert.equal(typeof result, "string");
     const normalizedResult = String(result).replaceAll("\\", "/");
-    assert.match(normalizedResult, /<skill_context id="api-lookup">/);
-    assert.match(normalizedResult, /<description>Resolve API lookups\.<\/description>/);
-    assert.match(normalizedResult, /<skill_root>.*\/.agents\/skills\/api-lookup<\/skill_root>/);
+    assert.match(normalizedResult, /<skill_context id="crm-skill">/);
+    assert.match(normalizedResult, /<skill_root>.*\/skills\/crm-skill<\/skill_root>/);
   } finally {
     await environment.dispose().catch(() => undefined);
-    await rm(workspaceRoot, { recursive: true, force: true });
   }
 });

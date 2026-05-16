@@ -19,6 +19,7 @@ ENV WORKSPACE_ROOT=/workspace
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/skills ./skills
 
 RUN mkdir -p /workspace \
   && chown -R node:node /app /workspace

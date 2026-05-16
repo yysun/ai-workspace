@@ -144,13 +144,11 @@ test("createBuiltInSelection enables all llm-runtime built-ins", () => {
   }
 });
 
-test("createEnvironmentOptions loads skills from both workspace skill roots", () => {
+test("createEnvironmentOptions loads skills from package root", () => {
   const options = createEnvironmentOptions(baseEnv, "/workspace");
 
-  assert.deepEqual(options.skillRoots, [
-    "/workspace/skills",
-    "/workspace/.agents/skills"
-  ]);
+  assert.equal(options.skillRoots?.length, 1);
+  assert.ok(options.skillRoots?.[0].endsWith("/skills"));
 });
 
 test("createProviderConfigs includes openai-compatible configuration", () => {
