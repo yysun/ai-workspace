@@ -589,7 +589,7 @@ export function renderToolResult(view: ToolResultView, mode: TraceMode): string 
   }
   parts.push(view.summary || (view.ok ? "completed" : "failed"));
 
-  const lines = [`  ${statusIcon} ${parts.join(" · ")}`];
+  const lines = [`  ${statusIcon} ${view.name} ${parts.join(" · ")}`];
   for (const previewLine of view.preview ?? []) {
     lines.push(`    ${previewLine}`);
   }
