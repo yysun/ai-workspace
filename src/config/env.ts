@@ -1,7 +1,7 @@
 /*
  * Feature: runtime environment configuration parsing for ai-workspace.
  * Notes: applies defaults for port, workspace root, and generic llm-runtime defaults.
- * Recent changes: replaced bespoke tool-toggle and provider-specific default-model env parsing with generic LLM_* settings.
+ * Recent changes: added authUserUrl for per-user workspace support.
  */
 
 import path from "node:path";
@@ -27,6 +27,7 @@ export type EnvConfig = {
   anthropicApiKey?: string;
   openAiCompatibleApiKey?: string;
   openAiCompatibleBaseUrl?: string;
+  authUserUrl?: string;
 };
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
@@ -109,6 +110,7 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     googleApiKey: source.GOOGLE_API_KEY,
     anthropicApiKey: source.ANTHROPIC_API_KEY,
     openAiCompatibleApiKey: source.OPENAI_COMPATIBLE_API_KEY,
-    openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined
+    openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined,
+    authUserUrl: source.AUTH_USER_URL?.trim() || undefined
   };
 }

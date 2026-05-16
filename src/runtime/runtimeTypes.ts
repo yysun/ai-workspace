@@ -1,7 +1,7 @@
 /*
  * Feature: shared runtime and API types for ai-workspace chat execution.
  * Notes: defines request and event contracts for the server-owned HTTP layer around llm-runtime.
- * Recent changes: added tool-call ids to streamed tool activity events for interactive client handling.
+ * Recent changes: added accessToken to RunChatCompletionInput for per-user API auth injection.
  */
 
 import type { LLMProviderName, LLMToolCall } from "llm-runtime";
@@ -35,6 +35,7 @@ export type RunChatCompletionInput = {
   maxTokens?: number;
   metadata?: Record<string, unknown>;
   workspaceRoot: string;
+  accessToken?: string;
   signal?: AbortSignal;
 };
 

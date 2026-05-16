@@ -1,24 +1,34 @@
 /*
  * Feature: end-to-end coverage for the chat completions HTTP route.
  * Notes: verifies valid non-stream requests reach runtime execution and return a 5xx runtime error when no provider credentials are configured.
- * Recent changes: added regression coverage for a request that previously surfaced as 400.
+ * Recent changes: updated to supply a Bearer token and a mock identity server to satisfy the multi-user auth requirement.
  */
 
 import assert from "node:assert/strict";
 import "dotenv/config";
 import { once } from "node:events";
-import type { Server } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createServer as createApp } from "../../src/server.js";
 import type { EnvConfig } from "../../src/config/env.js";
 
-const envWithoutProviderCredentials: EnvConfig = {
-  port: 0,
-  workspaceRoot: new URL("../fixtures/workspace", import.meta.url).pathname,
-  llmPermission: "auto",
-  llmReasoning: "medium"
-};
+const TEST_TOKEN = "e2e-test-token";
+const TEST_USER_ID = "e2e-user";
+
+async function startIdentityServer(): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve, reject) => {
+    const server = createHttpServer((_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: TEST_USER_ID }));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address() as AddressInfo;
+      resolve({ server, url: `http://127.0.0.1:${addr.port}` });
+    });
+    server.once("error", reject);
+  });
+}
 
 type LoggedError = [message: string, details: Record<string, unknown>];
 
@@ -35,8 +45,17 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function startServer(): Promise<{ server: Server; baseUrl: string }> {
-  return startServerWithEnv(envWithoutProviderCredentials);
+async function startServer(): Promise<{ server: Server; identityServer: Server; baseUrl: string }> {
+  const { server: identityServer, url: authUserUrl } = await startIdentityServer();
+  const env: EnvConfig = {
+    port: 0,
+    workspaceRoot: new URL("../fixtures/workspace", import.meta.url).pathname,
+    llmPermission: "auto",
+    llmReasoning: "medium",
+    authUserUrl
+  };
+  const { server, baseUrl } = await startServerWithEnv(env);
+  return { server, identityServer, baseUrl };
 }
 
 async function startServerWithEnv(env: EnvConfig): Promise<{ server: Server; baseUrl: string }> {
@@ -70,13 +89,14 @@ async function withCapturedConsoleError<T>(run: (loggedErrors: LoggedError[]) =>
 }
 
 test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid non-stream request", async () => {
-  const { server, baseUrl } = await startServer();
+  const { server, identityServer, baseUrl } = await startServer();
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TEST_TOKEN}`
       },
       body: JSON.stringify({
         model: "default",
@@ -97,12 +117,13 @@ test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid no
     assert.match(String(payload.error), /No configuration found for openai provider/i);
   } finally {
     await closeServer(server);
+    await closeServer(identityServer);
   }
 });
 
 test("POST /chat/completions returns 400 and logs a body preview for malformed JSON", { concurrency: false }, async () => {
   await withCapturedConsoleError(async (loggedErrors) => {
-    const { server, baseUrl } = await startServer();
+    const { server, identityServer, baseUrl } = await startServer();
 
     try {
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -130,18 +151,20 @@ test("POST /chat/completions returns 400 and logs a body preview for malformed J
       });
     } finally {
       await closeServer(server);
+      await closeServer(identityServer);
     }
   });
 });
 
 test("POST /chat/completions streams runtime errors over SSE when provider configuration is missing", async () => {
-  const { server, baseUrl } = await startServer();
+  const { server, identityServer, baseUrl } = await startServer();
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TEST_TOKEN}`
       },
       body: JSON.stringify({
         model: "default",
@@ -164,21 +187,27 @@ test("POST /chat/completions streams runtime errors over SSE when provider confi
     assert.match(body, /event: done/);
   } finally {
     await closeServer(server);
+    await closeServer(identityServer);
   }
 });
 
 test("POST /chat/completions streams workspace env load failures as SSE error events", async () => {
+  const { server: identityServer, url: authUserUrl } = await startIdentityServer();
   const brokenWorkspaceRoot = new URL("../../package.json", import.meta.url).pathname;
   const { server, baseUrl } = await startServerWithEnv({
-    ...envWithoutProviderCredentials,
-    workspaceRoot: brokenWorkspaceRoot
+    port: 0,
+    workspaceRoot: brokenWorkspaceRoot,
+    llmPermission: "auto",
+    llmReasoning: "medium",
+    authUserUrl
   });
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${TEST_TOKEN}`
       },
       body: JSON.stringify({
         model: "default",
@@ -201,5 +230,6 @@ test("POST /chat/completions streams workspace env load failures as SSE error ev
     assert.match(body, /event: done/);
   } finally {
     await closeServer(server);
+    await closeServer(identityServer);
   }
 });

@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends AGENTS.md to the server system prompt, delegates built-ins, skills, and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: added workspace-configured api_request tool registration and request-scoped env snapshots for tool execution and redaction.
+ * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken into requestEnv for multi-user support.
  */
 
 import {
@@ -264,6 +264,10 @@ export async function* runChatCompletion(
     });
     restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
     const requestEnv = { ...process.env };
+
+    if (input.accessToken) {
+      requestEnv.API_ACCESS_TOKEN = input.accessToken;
+    }
 
     const agentsMd = await loadAgentsMd(input.workspaceRoot);
     const builtIns = createBuiltInSelection();
