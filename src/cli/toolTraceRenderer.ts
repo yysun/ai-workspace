@@ -226,6 +226,10 @@ function summarizePathLikeCall(args: JsonRecord, ...keys: string[]): string {
   return value ? truncateOneLine(value, MAX_COMMAND_WIDTH) : compactJsonPreview(args);
 }
 
+function summarizePathExistsCall(args: JsonRecord): string {
+  return summarizePathLikeCall(args, "path", "filePath");
+}
+
 function summarizeGenericCall(args: unknown): string {
   if (!isRecord(args)) {
     return typeof args === "undefined" ? "" : compactJsonPreview(args);
@@ -375,6 +379,30 @@ function summarizeReadFileResult(result: unknown, forcedDurationMs?: number): To
   };
 }
 
+function summarizePathExistsResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+  const exists = readFirstBoolean(record, "exists");
+  const path = readFirstString(record, "path", "filePath");
+  const type = readFirstString(record, "type", "kind");
+  const preview = [
+    path ? truncateOneLine(`path: ${path}`, MAX_PREVIEW_LINE_WIDTH) : null,
+    type ? `type: ${type}` : null
+  ].filter((line): line is string => line !== null);
+
+  return {
+    name: "path_exists",
+    ok,
+    durationMs,
+    summary: exists === null
+      ? (ok ? "completed" : "failed")
+      : String(exists),
+    preview: preview.length > 0 ? preview : undefined,
+    raw: result
+  };
+}
+
 function summarizeWriteFileResult(result: unknown, forcedDurationMs?: number): ToolResultView {
   const record = parseJsonRecord(result);
   const bytes = readFirstNumber(record, "bytesWritten", "bytes", "size")
@@ -493,6 +521,10 @@ export function summarizeToolCall(toolName: string, args: unknown): ToolCallView
     return { name: toolName, summary: summarizeShellToolCall(args), args };
   }
 
+  if (toolName === "path_exists" && isRecord(args)) {
+    return { name: toolName, summary: summarizePathExistsCall(args), args };
+  }
+
   if (toolName === "search_files" && isRecord(args)) {
     return { name: toolName, summary: summarizePathLikeCall(args, "query", "pattern", "glob", "includePattern"), args };
   }
@@ -519,6 +551,10 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
 
   if (toolName === "read_file") {
     return summarizeReadFileResult(result, durationMs);
+  }
+
+  if (toolName === "path_exists") {
+    return summarizePathExistsResult(result, durationMs);
   }
 
   if (toolName === "write_file") {
@@ -577,4 +613,28 @@ export function formatToolEventLine(
 
 export function formatToolResultEventLine(name: string, result: unknown, mode: TraceMode = "default"): string {
   return renderToolResult(summarizeToolResult(name, result), mode);
+}
+
+export function formatInlinePathExistsEventLine(
+  args: unknown,
+  result: unknown,
+  mode: TraceMode = "default"
+): string | null {
+  if (mode === "debug") {
+    return null;
+  }
+
+  const callView = summarizeToolCall("path_exists", args);
+  const resultView = summarizeToolResult("path_exists", result);
+  if (resultView.summary !== "true" && resultView.summary !== "false") {
+    return null;
+  }
+
+  const lines = [`  ↳ ${callView.name}${callView.summary ? ` ${callView.summary}` : ""} ${resultView.summary}`];
+  if (mode === "verbose") {
+    lines.push(`    args: ${compactJsonPreview(args, MAX_VERBOSE_JSON_WIDTH)}`);
+    lines.push(`    raw: ${compactJsonPreview(result, MAX_VERBOSE_JSON_WIDTH)}`);
+  }
+
+  return `\n${lines.join("\n")}\n`;
 }

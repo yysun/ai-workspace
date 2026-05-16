@@ -17,6 +17,7 @@ import {
   createHumanInputAssistantMessage,
   extractSseEventBlocks,
   formatHumanInputCheckpoint,
+  formatInlinePathExistsEventLine,
   formatToolEventLine,
   formatToolResultEventLine,
   formatHumanInputAnswerMessage,
@@ -278,6 +279,24 @@ test("formatToolEventLine renders a compact generic tool summary by default", ()
   );
 });
 
+test("formatInlinePathExistsEventLine renders path and boolean on one line", () => {
+  assert.equal(
+    formatInlinePathExistsEventLine(
+      { path: "data/accounts/255/current/insight.md" },
+      JSON.stringify({
+        path: "data/accounts/255/current/insight.md",
+        exists: false,
+        type: null
+      })
+    ),
+    [
+      "",
+      "  ↳ path_exists data/accounts/255/current/insight.md false",
+      ""
+    ].join("\n")
+  );
+});
+
 test("formatToolEventLine renders verbose tool details without raw dumping", () => {
   assert.equal(
     formatToolEventLine("tool.call", "search_files", { query: "**/*marp*" }, "verbose"),
@@ -344,7 +363,7 @@ test("formatToolResultEventLine keeps raw output in debug mode", () => {
   );
 });
 
-test("formatToolResultEventLine omits brace-only lines from structured previews", () => {
+test("formatToolResultEventLine summarizes path_exists results structurally", () => {
   assert.equal(
     formatToolResultEventLine("path_exists", [
       "{",
@@ -357,10 +376,9 @@ test("formatToolResultEventLine omits brace-only lines from structured previews"
     ].join("\n")),
     [
       "",
-      "  ✓ 7 lines",
-      "    \"path\": \"/Users/esun/Documents/Projects/crm-ai-workspace/.env\",",
-      "    \"exists\": true,",
-      "    \"checked\": true,",
+      "  ✓ true",
+      "    path: /Users/esun/Documents/Projects/crm-ai-workspace/.env",
+      "    type: file",
       ""
     ].join("\n")
   );
@@ -503,6 +521,74 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
     assert.doesNotMatch(
       sharedTerminal.text(),
       /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ 7 lines/u
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("streamAssistantTurn renders path_exists as a single inline trace line", async () => {
+  const sharedTerminal = createWritableCapture(true);
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "path_exists",
+        args: {
+          path: "data/accounts/255/current/insight.md"
+        },
+        toolCallId: "call_exists"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "path_exists",
+        result: JSON.stringify({
+          path: "data/accounts/255/current/insight.md",
+          exists: false,
+          type: null
+        }),
+        toolCallId: "call_exists"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
+
+    assert.match(
+      sharedTerminal.text(),
+      /↳ path_exists data\/accounts\/255\/current\/insight\.md false/u
+    );
+    assert.doesNotMatch(
+      sharedTerminal.text(),
+      /✓ false/u
     );
   } finally {
     global.fetch = originalFetch;

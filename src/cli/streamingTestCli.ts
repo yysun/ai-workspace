@@ -9,6 +9,7 @@ import { stdin, stdout, stderr } from "node:process";
 import type { ChatMessage } from "../runtime/runtimeTypes.js";
 import {
   formatToolEventLine,
+  formatInlinePathExistsEventLine,
   formatToolResultEventLine,
   type TraceMode,
   renderToolCall,
@@ -30,6 +31,7 @@ export type CliOptions = {
 
 export {
   formatToolEventLine,
+  formatInlinePathExistsEventLine,
   formatToolResultEventLine,
   renderToolCall,
   renderToolResult,
@@ -972,6 +974,7 @@ export async function streamAssistantTurn(
   };
   let sawToolActivity = false;
   const humanInputRequests: PendingHumanInputRequest[] = [];
+  const pendingPathExistsCalls = new Map<string, unknown>();
   const assistantDisplay = createAssistantPendingDisplay(output);
 
   assistantDisplay.start();
@@ -994,6 +997,9 @@ export async function streamAssistantTurn(
         const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; toolCallId?: unknown }>(event);
         if (typeof payload?.name === "string") {
           const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
+          const inlinePathExists = payload.name === "path_exists"
+            && toolCallId.length > 0
+            && options.traceMode !== "debug";
           appendHumanInputRequest(
             humanInputRequests,
             parseHumanInputToolCall(
@@ -1002,7 +1008,13 @@ export async function streamAssistantTurn(
               toolCallId
             )
           );
+          if (inlinePathExists) {
+            pendingPathExistsCalls.set(toolCallId, payload.args);
+          }
           if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
+            if (inlinePathExists) {
+              continue;
+            }
             assistantDisplay.clearPending();
             errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args, options.traceMode), errorOutput)}`);
             if (progress.assistantText) {
@@ -1017,6 +1029,9 @@ export async function streamAssistantTurn(
         const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
         if (typeof payload?.name === "string") {
           const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
+          const inlinePathExistsArgs = payload.name === "path_exists" && toolCallId.length > 0
+            ? pendingPathExistsCalls.get(toolCallId)
+            : undefined;
           appendHumanInputRequest(
             humanInputRequests,
             parsePendingHumanInputRequest(
@@ -1025,7 +1040,25 @@ export async function streamAssistantTurn(
               toolCallId
             )
           );
+          if (toolCallId.length > 0) {
+            pendingPathExistsCalls.delete(toolCallId);
+          }
           if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
+            if (typeof inlinePathExistsArgs !== "undefined") {
+              const inlineTrace = formatInlinePathExistsEventLine(
+                inlinePathExistsArgs,
+                payload.result,
+                options.traceMode
+              );
+              if (inlineTrace) {
+                assistantDisplay.clearPending();
+                errorOutput.write(`${formatGray(inlineTrace, errorOutput)}`);
+                if (progress.assistantText) {
+                  assistantDisplay.resumeAfterInterruption(progress.assistantText);
+                }
+                continue;
+              }
+            }
             assistantDisplay.clearPending();
             errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result, options.traceMode), errorOutput)}`);
             if (progress.assistantText) {
