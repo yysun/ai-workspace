@@ -4,6 +4,7 @@
  * Recent changes: added a developer-facing command for interactive streamed chat testing.
  */
 
+import "dotenv/config";
 import { runStreamingTestCli } from "./streamingTestCli.js";
 
 void runStreamingTestCli().catch((error: unknown) => {
