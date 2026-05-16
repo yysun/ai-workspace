@@ -89,7 +89,8 @@ test("resolveCliOptions derives baseUrl and model from args and env", () => {
     autoContinue: true,
     autoContinueMessage: "keep going",
     autoContinueTurns: 2,
-    traceMode: "default"
+    traceMode: "default",
+    accessToken: undefined
   });
 });
 
@@ -109,7 +110,8 @@ test("resolveCliOptions falls back to default auto-continue settings", () => {
     autoContinue: false,
     autoContinueMessage: "go ahead",
     autoContinueTurns: 1,
-    traceMode: "default"
+    traceMode: "default",
+    accessToken: undefined
   });
 });
 

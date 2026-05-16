@@ -28,6 +28,7 @@ export type EnvConfig = {
   openAiCompatibleApiKey?: string;
   openAiCompatibleBaseUrl?: string;
   authUserUrl?: string;
+  apiCliPat?: string;
 };
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
@@ -111,6 +112,14 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     anthropicApiKey: source.ANTHROPIC_API_KEY,
     openAiCompatibleApiKey: source.OPENAI_COMPATIBLE_API_KEY,
     openAiCompatibleBaseUrl: source.OPENAI_COMPATIBLE_BASE_URL?.trim() || undefined,
-    authUserUrl: source.AUTH_USER_URL?.trim() || undefined
+    authUserUrl: (() => {
+      const base = source.API_BASE_URL?.trim();
+      const authPath = source.AUTH_USER_PATH?.trim();
+      if (!base || !authPath) return undefined;
+      const normalizedBase = base.replace(/\/+$/, "");
+      const normalizedPath = authPath.startsWith("/") ? authPath : `/${authPath}`;
+      return `${normalizedBase}${normalizedPath}`;
+    })(),
+    apiCliPat: source.API_CLI_PAT?.trim() || undefined
   };
 }

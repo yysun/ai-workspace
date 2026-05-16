@@ -27,6 +27,7 @@ export type CliOptions = {
   autoContinueMessage: string;
   autoContinueTurns: number;
   traceMode: TraceMode;
+  accessToken?: string;
 };
 
 export {
@@ -618,7 +619,8 @@ export function resolveCliOptions(args: string[], env: NodeJS.ProcessEnv): CliOp
     autoContinue: readBooleanFlag(args, "--auto-continue") || isTruthy(env.AI_WORKSPACE_AUTO_CONTINUE),
     autoContinueMessage: rawAutoContinueMessage.trim() || "go ahead",
     autoContinueTurns,
-    traceMode: resolveTraceMode(args)
+    traceMode: resolveTraceMode(args),
+    accessToken: env.API_CLI_PAT?.trim() || undefined
   };
 }
 
@@ -949,7 +951,8 @@ export async function streamAssistantTurn(
   const response = await fetch(`${options.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...(options.accessToken ? { "Authorization": `Bearer ${options.accessToken}` } : {})
     },
     body: JSON.stringify({
       model: options.model,
