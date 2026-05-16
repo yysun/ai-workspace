@@ -171,7 +171,18 @@ export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConf
 }
 
 export function createBuiltInSelection(): BuiltInToolSelection {
-  return true;
+  return {
+    shell_cmd: false,
+    web_fetch: false,
+    load_skill: false,
+    ask_user_input: true,
+    read_file: true,
+    write_file: true,
+    list_files: true,
+    search_files: true,
+    create_directory: true,
+    path_exists: true
+  };
 }
 
 export function resolveMaxTokens(input: RunChatCompletionInput, env: EnvConfig): number | undefined {
