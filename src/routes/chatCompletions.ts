@@ -4,6 +4,7 @@
  * Recent changes: added multi-user support — extracts Bearer token, resolves user ID via AUTH_USER_URL, sets per-user workspace root, and injects access token into runtime env.
  */
 
+import { mkdir } from "node:fs/promises";
 import type { RequestHandler, Request } from "express";
 import type { EnvConfig } from "../config/env.js";
 import { resolveUserId, UserIdResolutionError } from "../auth/resolveUserId.js";
@@ -156,6 +157,9 @@ export function createChatCompletionsHandler(env: EnvConfig): RequestHandler {
       const abortController = new AbortController();
       const sanitizedUserId = userId.replace(/[/\\.\0]/g, "_");
       const workspaceRoot = `${resolveWorkspaceRoot(env.workspaceRoot)}/${sanitizedUserId}`;
+
+      console.log(`[chat] userId=${userId} workspaceRoot=${workspaceRoot}`);
+      await mkdir(workspaceRoot, { recursive: true });
 
       req.on("aborted", () => {
         abortController.abort();

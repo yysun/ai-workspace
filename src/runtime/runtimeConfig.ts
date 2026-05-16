@@ -172,7 +172,7 @@ export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConf
 
 export function createBuiltInSelection(): BuiltInToolSelection {
   return {
-    shell_cmd: false,
+    shell_cmd: true,
     web_fetch: false,
     load_skill: false,
     ask_user_input: true,
