@@ -449,6 +449,66 @@ test("formatToolResultEventLine uses event timing for shell_cmd markdown results
   );
 });
 
+test("formatToolEventLine summarizes list_files calls using requestedPath", () => {
+  assert.equal(
+    formatToolEventLine("tool.call", "list_files", {
+      requestedPath: "process",
+      recursive: false
+    }),
+    [
+      "",
+      "  ↳ list_files process"
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine suppresses list_files metadata previews", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "list_files",
+      [
+        "{",
+        '  "requestedPath": "process",',
+        '  "path": "/Users/esun/Documents/Projects/ai-workspace/crm-ai-workspace/process",',
+        '  "recursive": false,',
+        '  "entries": ["api.md", "summary.md"]',
+        "}"
+      ].join("\n"),
+      "default",
+      undefined,
+      1
+    ),
+    [
+      "",
+      "  ✓ list_files 1ms · 2 lines",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine suppresses create_directory metadata previews", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "create_directory",
+      [
+        "{",
+        '  "ok": true,',
+        '  "status": "success",',
+        '  "path": "/Users/esun/Documents/Projects/ai-workspace/crm-ai-workspace/users/3/data/contacts/99027713/current"',
+        "}"
+      ].join("\n"),
+      "default",
+      undefined,
+      1
+    ),
+    [
+      "",
+      "  ✓ create_directory 1ms · success",
+      ""
+    ].join("\n")
+  );
+});
+
 test("streamAssistantTurn writes tool results using returned payloads", async () => {
   const output = createWritableCapture();
   const errorOutput = createWritableCapture();
@@ -585,6 +645,10 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
       sharedTerminal.text(),
       /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
     );
+    assert.match(
+      sharedTerminal.text(),
+      /✓ read_file lines 41-47\n(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*done/u
+    );
     assert.doesNotMatch(
       sharedTerminal.text(),
       /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
@@ -649,6 +713,10 @@ test("streamAssistantTurn does not preview workspace_read_file content", async (
     assert.match(
       sharedTerminal.text(),
       /↳ workspace_read_file users\/3\/data\/contacts\/99000002\/current\/sources\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ workspace_read_file 1ms · 3 lines/u
+    );
+    assert.match(
+      sharedTerminal.text(),
+      /✓ workspace_read_file 1ms · 3 lines\n(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*done/u
     );
     assert.doesNotMatch(sharedTerminal.text(), /created_at: 2026-05-17T00:00:00Z/u);
     assert.doesNotMatch(sharedTerminal.text(), /updated_at: 2026-05-17T00:00:00Z/u);
@@ -788,6 +856,71 @@ test("streamAssistantTurn renders shell_cmd duration from tool.result payload wh
     assert.match(
       sharedTerminal.text(),
       /↳ shell_cmd pwd(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ shell_cmd 42ms · completed/u
+    );
+    assert.match(
+      sharedTerminal.text(),
+      /✓ shell_cmd 42ms · completed\n(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*done/u
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("streamAssistantTurn synthesizes a missing shell_cmd call line from tool.result args", async () => {
+  const sharedTerminal = createWritableCapture(true);
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "shell_cmd",
+        args: {
+          command: "pwd",
+          parameters: []
+        },
+        result: [
+          "status: success",
+          "exit_code: 0",
+          "aborted: false",
+          "timed_out: false",
+          "stdout:",
+          "stderr:"
+        ].join("\n"),
+        durationMs: 74,
+        toolCallId: "call_shell_missing"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
+
+    assert.match(
+      sharedTerminal.text(),
+      /↳ shell_cmd pwd(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ shell_cmd 74ms · completed/u
     );
   } finally {
     global.fetch = originalFetch;
@@ -978,7 +1111,6 @@ test("collectHumanInputAnswers writes a readable user checkpoint", async () => {
 test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
   const output = createWritableCapture();
   const answerMessage = [
-    "[human-input] response:",
     "- Answer for request call_123:",
     "  - mode (Which mode?): safe (Safe)"
   ].join("\n");
@@ -986,8 +1118,6 @@ test("writeQueuedHumanInputFollowUp includes the readable answer payload", () =>
   writeQueuedHumanInputFollowUp(output.output, answerMessage);
 
   assert.equal(output.text(), [
-    "[human-input] queued answer follow-up:",
-    "[human-input] response:",
     "- Answer for request call_123:",
     "  - mode (Which mode?): safe (Safe)",
     ""
@@ -1134,15 +1264,12 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "  1. Jazz Gill (Contact ID 123)",
       "  2. Not sure / search all",
       "Select a number or option id: 1",
-      "[human-input] queued answer follow-up:",
-      "[human-input] response:",
       "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))",
       ""
     ].join("\n"));
 
     assert.equal(formatHumanInputAnswerMessage(answers), [
-      "[human-input] response:",
       "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))"
     ].join("\n"));
@@ -1224,10 +1351,6 @@ test("formatHumanInputAnswerMessage serializes selected ids and labels", () => {
       ]
     }
   ]), [
-    "[human-input] response:",
-    "- Answer for request call_123:",
-    "  - mode (Which mode?): safe, full (Safe, Full)",
-    "  - notes (Any notes?): skipped"
   ].join("\n"));
 });
 

@@ -371,7 +371,7 @@ function countMatches(result: unknown): number | null {
     return null;
   }
 
-  for (const key of ["matches", "results", "files", "items"]) {
+  for (const key of ["matches", "results", "files", "items", "entries"]) {
     const value = record[key];
     if (Array.isArray(value)) {
       return value.length;
@@ -447,6 +447,34 @@ function summarizeWriteFileResult(result: unknown, forcedDurationMs?: number): T
     ok: inferOk(record, true),
     durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
     summary: bytes === null ? "written" : `${formatFileSize(bytes)} written`,
+    raw: result
+  };
+}
+
+function summarizeListFilesResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const entryCount = countMatches(result)
+    ?? readFirstNumber(record, "entryCount", "lineCount")
+    ?? (typeof result === "string" ? countLines(result) : null);
+
+  return {
+    name: "list_files",
+    ok: inferOk(record, true),
+    durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
+    summary: entryCount === null ? "completed" : formatLineCount(entryCount),
+    raw: result
+  };
+}
+
+function summarizeCreateDirectoryResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const status = readFirstString(record, "status", "message");
+
+  return {
+    name: "create_directory",
+    ok: inferOk(record, true),
+    durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
+    summary: status ? truncateOneLine(status, MAX_PREVIEW_LINE_WIDTH) : "completed",
     raw: result
   };
 }
@@ -564,11 +592,15 @@ export function summarizeToolCall(toolName: string, args: unknown): ToolCallView
     return { name: toolName, summary: summarizePathLikeCall(args, "query", "pattern", "glob", "includePattern"), args };
   }
 
+  if (toolName === "list_files" && isRecord(args)) {
+    return { name: toolName, summary: summarizePathLikeCall(args, "requestedPath", "path", "filePath"), args };
+  }
+
   if (isReadFileLikeToolName(toolName) && isRecord(args)) {
     return { name: toolName, summary: summarizePathLikeCall(args, "filePath", "path"), args };
   }
 
-  if (toolName === "write_file" && isRecord(args)) {
+  if ((toolName === "write_file" || toolName === "create_directory") && isRecord(args)) {
     return { name: toolName, summary: summarizePathLikeCall(args, "filePath", "path"), args };
   }
 
@@ -594,6 +626,14 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
 
   if (toolName === "write_file") {
     return summarizeWriteFileResult(result, durationMs);
+  }
+
+  if (toolName === "list_files") {
+    return summarizeListFilesResult(result, durationMs);
+  }
+
+  if (toolName === "create_directory") {
+    return summarizeCreateDirectoryResult(result, durationMs);
   }
 
   return summarizeGenericToolResult(result, toolName, durationMs);

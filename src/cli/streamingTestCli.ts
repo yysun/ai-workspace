@@ -182,6 +182,7 @@ function createAssistantPendingDisplay(output: WritableLike): {
   clearPending: () => void;
   writeAssistantText: (text: string) => void;
   resumeAfterInterruption: (assistantText: string) => void;
+  queueSpacerBeforeNextText: () => void;
   hasWrittenAssistantText: () => boolean;
 } {
   const frames = [".", "..", "..."];
@@ -189,6 +190,7 @@ function createAssistantPendingDisplay(output: WritableLike): {
   let interval: NodeJS.Timeout | null = null;
   let pendingVisible = false;
   let assistantTextWritten = false;
+  let spacerBeforeNextText = false;
 
   const writeFrame = (frame: string): void => {
     output.write(`\r\u001b[2K${frame}`);
@@ -228,7 +230,9 @@ function createAssistantPendingDisplay(output: WritableLike): {
     clearPending();
     if (text) {
       assistantTextWritten = true;
-      output.write(text);
+      const prefix = spacerBeforeNextText ? "\n" : "";
+      spacerBeforeNextText = false;
+      output.write(`${prefix}${text}`);
     }
   };
 
@@ -236,11 +240,17 @@ function createAssistantPendingDisplay(output: WritableLike): {
     clearPending();
     if (assistantText) {
       assistantTextWritten = true;
-      output.write(assistantText);
+      const prefix = spacerBeforeNextText ? "\n" : "";
+      spacerBeforeNextText = false;
+      output.write(`${prefix}${assistantText}`);
       return;
     }
 
     start();
+  };
+
+  const queueSpacerBeforeNextText = (): void => {
+    spacerBeforeNextText = true;
   };
 
   return {
@@ -248,6 +258,7 @@ function createAssistantPendingDisplay(output: WritableLike): {
     clearPending,
     writeAssistantText,
     resumeAfterInterruption,
+    queueSpacerBeforeNextText,
     hasWrittenAssistantText: () => assistantTextWritten
   };
 }
@@ -564,7 +575,7 @@ export async function collectHumanInputAnswers(
 }
 
 export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): string {
-  const lines = ["[human-input] response:"];
+  const lines: string[] = [];
 
   for (const answer of answers) {
     const requestLabel = answer.requestId ? ` for request ${answer.requestId}` : "";
@@ -590,7 +601,6 @@ export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): stri
 }
 
 export function writeQueuedHumanInputFollowUp(output: WritableLike, answerMessage: string): void {
-  output.write(`${formatGray("[human-input] queued answer follow-up:", output)}\n`);
   output.write(`${answerMessage}\n`);
 }
 
@@ -1023,6 +1033,7 @@ export async function streamAssistantTurn(
             }
             assistantDisplay.clearPending();
             errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, payload.args, options.traceMode), errorOutput)}`);
+            assistantDisplay.queueSpacerBeforeNextText();
             if (progress.assistantText) {
               assistantDisplay.resumeAfterInterruption(progress.assistantText);
             }
@@ -1036,8 +1047,10 @@ export async function streamAssistantTurn(
         if (typeof payload?.name === "string") {
           const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
           const pendingToolCall = toolCallId.length > 0 ? pendingToolCalls.get(toolCallId) : undefined;
-          const inlinePathExistsArgs = payload.name === "path_exists" && pendingToolCall?.name === "path_exists"
-            ? pendingToolCall.args
+          const inlinePathExistsArgs = payload.name === "path_exists"
+            ? (pendingToolCall?.name === "path_exists"
+              ? pendingToolCall.args
+              : payload.args)
             : undefined;
           const toolCallArgs = typeof payload.args !== "undefined"
             ? payload.args
@@ -1066,6 +1079,7 @@ export async function streamAssistantTurn(
               if (inlineTrace) {
                 assistantDisplay.clearPending();
                 errorOutput.write(`${formatGray(inlineTrace, errorOutput)}`);
+                assistantDisplay.queueSpacerBeforeNextText();
                 if (progress.assistantText) {
                   assistantDisplay.resumeAfterInterruption(progress.assistantText);
                 }
@@ -1073,7 +1087,11 @@ export async function streamAssistantTurn(
               }
             }
             assistantDisplay.clearPending();
+            if (!pendingToolCall) {
+              errorOutput.write(`${formatGray(formatToolEventLine("tool.call", payload.name, toolCallArgs, options.traceMode), errorOutput)}`);
+            }
             errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result, options.traceMode, toolCallArgs, toolDurationMs), errorOutput)}`);
+            assistantDisplay.queueSpacerBeforeNextText();
             if (progress.assistantText) {
               assistantDisplay.resumeAfterInterruption(progress.assistantText);
             }
@@ -1086,6 +1104,7 @@ export async function streamAssistantTurn(
         if (typeof payload?.warning === "string") {
           assistantDisplay.clearPending();
           errorOutput.write(`${formatGray(`\n[warning] ${payload.warning}\n`, errorOutput)}`);
+          assistantDisplay.queueSpacerBeforeNextText();
         }
       }
 
