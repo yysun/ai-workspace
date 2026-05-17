@@ -15,14 +15,14 @@ import {
 
 test("createRequestTools always includes workspace_read_file and conditionally includes api_request", () => {
   assert.deepEqual(
-    createRequestTools("/workspace", {}).map((tool) => tool.name),
+    createRequestTools("/workspace", {}, "3").map((tool) => tool.name),
     ["workspace_read_file"]
   );
 
   assert.deepEqual(
     createRequestTools("/workspace", {
       API_BASE_URL: "https://api.example.test/root"
-    }).map((tool) => tool.name),
+    }, "3").map((tool) => tool.name),
     ["workspace_read_file", "api_request"]
   );
 });

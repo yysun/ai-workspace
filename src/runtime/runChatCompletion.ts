@@ -251,9 +251,9 @@ function isHumanInputToolName(toolName: string): boolean {
   return HUMAN_INPUT_TOOL_NAMES.has(toolName);
 }
 
-export function createRequestTools(workspaceRoot: string, envSource: NodeJS.ProcessEnv): LLMToolDefinition[] {
+export function createRequestTools(workspaceRoot: string, envSource: NodeJS.ProcessEnv, userId: string): LLMToolDefinition[] {
   const tools: LLMToolDefinition[] = [createReadFileTool({ workspaceRoot })];
-  const apiRequestTool = createApiRequestTool({ envSource });
+  const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot, userId });
   if (apiRequestTool) {
     tools.push(apiRequestTool);
   }
@@ -286,7 +286,7 @@ export async function* runChatCompletion(
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
-    const extraTools = createRequestTools(input.workspaceRoot, requestEnv);
+    const extraTools = createRequestTools(input.workspaceRoot, requestEnv, input.userId);
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,

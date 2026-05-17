@@ -46,6 +46,7 @@ test("composeSystemPrompt appends AGENTS.md content to the default system prompt
   assert.doesNotMatch(prompt, /User root:/);
   assert.doesNotMatch(prompt, /Tool working directory:/);
   assert.match(prompt, /Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable\./);
+  assert.match(prompt, /For large responses, pass outputFilePath under the tool-owned api-responses directory so the body is saved to disk instead of being returned inline\./);
   assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
 });
 

@@ -31,7 +31,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from AGENTS.md.",
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
   "If an external API or network lookup is required, use an available tool instead of narrating intent.",
-  "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host.",
+  "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host. For large responses, pass outputFilePath under the tool-owned api-responses directory so the body is saved to disk instead of being returned inline.",
   "When available, prefer `workspace_read_file` for workspace file reads; it is host-owned and returns full file content by default.",
   "Prefer `shell_cmd` for authenticated API work only when workspace instructions explicitly require `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
   "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
