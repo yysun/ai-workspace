@@ -19,6 +19,7 @@
     "node": ">=22.16.0"
   },
   "dependencies": {
+    "@marp-team/marp-cli": "^4.4.0",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
     "llm-runtime": "^0.5.0",
