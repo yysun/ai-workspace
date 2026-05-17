@@ -34,6 +34,7 @@ async function startIdentityServer(): Promise<{ server: Server; url: string }> {
 }
 
 type LoggedError = [message: string, details: Record<string, unknown>];
+type LoggedInfo = string[];
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -91,41 +92,63 @@ async function withCapturedConsoleError<T>(run: (loggedErrors: LoggedError[]) =>
   }
 }
 
-test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid non-stream request", async () => {
-  const { server, identityServer, baseUrl } = await startServer();
-  const userDataRoot = path.join(TEST_WORKSPACE_ROOT, "users", TEST_USER_ID);
+async function withCapturedConsoleLog<T>(run: (loggedMessages: LoggedInfo) => Promise<T>): Promise<T> {
+  const loggedMessages: LoggedInfo = [];
+  const originalConsoleLog = console.log;
+
+  console.log = ((message?: unknown, ...optionalParams: unknown[]) => {
+    loggedMessages.push([message, ...optionalParams].map((value) => String(value)).join(" "));
+  }) as typeof console.log;
 
   try {
-    await rm(userDataRoot, { recursive: true, force: true });
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${TEST_TOKEN}`
-      },
-      body: JSON.stringify({
-        model: "default",
-        stream: false,
-        messages: [
-          {
-            role: "user",
-            content: "Summarize the loaded workspace context."
-          }
-        ]
-      })
-    });
-
-    const payload = await response.json() as { error?: unknown };
-
-    assert.equal(response.status, 500);
-    assert.equal(typeof payload.error, "string");
-    assert.match(String(payload.error), /No configuration found for openai provider/i);
-    await access(userDataRoot);
+    return await run(loggedMessages);
   } finally {
-    await closeServer(server);
-    await closeServer(identityServer);
+    console.log = originalConsoleLog;
   }
+}
+
+test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid non-stream request", async () => {
+  await withCapturedConsoleLog(async (loggedMessages) => {
+    const { server, identityServer, baseUrl } = await startServer();
+    const userDataRoot = path.join(TEST_WORKSPACE_ROOT, "users", TEST_USER_ID);
+
+    try {
+      await rm(userDataRoot, { recursive: true, force: true });
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${TEST_TOKEN}`
+        },
+        body: JSON.stringify({
+          model: "default",
+          stream: false,
+          messages: [
+            {
+              role: "user",
+              content: "Summarize the loaded workspace context."
+            }
+          ]
+        })
+      });
+
+      const payload = await response.json() as { error?: unknown };
+
+      assert.equal(response.status, 500);
+      assert.equal(typeof payload.error, "string");
+      assert.match(String(payload.error), /No configuration found for openai provider/i);
+      await access(userDataRoot);
+
+      const chatLog = loggedMessages.find((entry) => entry.startsWith("[chat] "));
+      assert.equal(chatLog, `[chat] userId=${TEST_USER_ID}`);
+      assert.ok(!chatLog?.includes("workspaceRoot="));
+      assert.ok(!chatLog?.includes("userDataRoot="));
+    } finally {
+      await closeServer(server);
+      await closeServer(identityServer);
+    }
+  });
 });
 
 test("POST /chat/completions returns 400 and logs a body preview for malformed JSON", { concurrency: false }, async () => {

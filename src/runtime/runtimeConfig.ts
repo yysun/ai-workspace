@@ -18,6 +18,10 @@ import type { ChatMessage, ResolvedRuntimeTarget, RunChatCompletionInput } from 
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
 
+type RuntimeUserContext = {
+  userId: string;
+};
+
 const DEFAULT_SYSTEM_PROMPT = [
   "You are a workspace agent running inside ai-workspace.",
   "Help the user by inspecting the workspace, using available tools when needed, and answering from the files and context you can access.",
@@ -204,8 +208,20 @@ export function describeRuntimeDefaults(env: EnvConfig): {
   };
 }
 
-export function composeSystemPrompt(agentsMd: string | null | undefined): string {
+export function composeSystemPrompt(
+  agentsMd: string | null | undefined,
+  runtimeUserContext?: RuntimeUserContext
+): string {
   const sections = [DEFAULT_SYSTEM_PROMPT];
+
+  if (runtimeUserContext) {
+    sections.push([
+      "Runtime user context:",
+      `- User ID: ${runtimeUserContext.userId}`,
+      "- Shared workspace files such as AGENTS.md, process/, data/, and output/ are available in the mounted workspace.",
+      "- Use explicit users/<id>/... paths only for user-scoped files."
+    ].join("\n"));
+  }
 
   if (agentsMd?.trim()) {
     sections.push(`Additional workspace instructions:\n${agentsMd.trim()}`);
@@ -224,11 +240,15 @@ function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {
   }));
 }
 
-export function buildRuntimeMessages(messages: ChatMessage[], agentsMd: string | null): LLMChatMessage[] {
+export function buildRuntimeMessages(
+  messages: ChatMessage[],
+  agentsMd: string | null,
+  runtimeUserContext?: RuntimeUserContext
+): LLMChatMessage[] {
   return [
     {
       role: "system",
-      content: composeSystemPrompt(agentsMd)
+      content: composeSystemPrompt(agentsMd, runtimeUserContext)
     },
     ...toLlmMessages(messages)
   ];

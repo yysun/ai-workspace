@@ -34,10 +34,17 @@ const baseEnv: EnvConfig = {
 };
 
 test("composeSystemPrompt appends AGENTS.md content to the default system prompt", () => {
-  const prompt = composeSystemPrompt("Always cite the workspace policy.");
+  const prompt = composeSystemPrompt("Always cite the workspace policy.", {
+    userId: "3"
+  });
 
   assert.match(prompt, /You are a workspace agent running inside ai-workspace\./);
   assert.match(prompt, /Prefer workspace evidence over speculation/);
+  assert.match(prompt, /Runtime user context:/);
+  assert.match(prompt, /User ID: 3/);
+  assert.doesNotMatch(prompt, /Workspace root:/);
+  assert.doesNotMatch(prompt, /User root:/);
+  assert.doesNotMatch(prompt, /Tool working directory:/);
   assert.match(prompt, /Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable\./);
   assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
 });
@@ -57,6 +64,7 @@ test("resolveRuntimeTarget uses provider-prefixed models when present", () => {
     model: "anthropic:claude-3-7-sonnet",
     messages: [],
     stream: false,
+    userId: "3",
     workspaceRoot: "/workspace"
   }, baseEnv);
 
@@ -71,6 +79,7 @@ test("resolveRuntimeTarget allows azure as the configured default provider", () 
     model: "default",
     messages: [],
     stream: false,
+    userId: "3",
     workspaceRoot: "/workspace"
   }, {
     ...baseEnv,
@@ -94,6 +103,7 @@ test("resolveRuntimeTarget allows openai-compatible as the configured default pr
     model: "default",
     messages: [],
     stream: false,
+    userId: "3",
     workspaceRoot: "/workspace"
   }, {
     ...baseEnv,
@@ -114,6 +124,7 @@ test("resolveRuntimeTarget falls back to generic LLM_* provider and model defaul
     model: "default",
     messages: [],
     stream: true,
+    userId: "3",
     workspaceRoot: "/workspace"
   }, baseEnv);
 
@@ -127,6 +138,7 @@ test("resolveMaxTokens and resolveTemperature fall back to generic env defaults"
   const input = {
     messages: [],
     stream: false,
+    userId: "3",
     workspaceRoot: "/workspace"
   };
 

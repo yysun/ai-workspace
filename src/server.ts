@@ -74,7 +74,7 @@ export function createServer(env: EnvConfig): Express {
   const app = express();
   const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
   const agentsMdCachePromise = loadAgentsMdCache(workspaceRoot).then((loaded) => {
-    console.log(`[workspace] AGENTS.md path: ${loaded.path}${loaded.content === null ? " (missing)" : ""}`);
+    console.log(`[workspace] AGENTS.md ${loaded.content === null ? " (missing)" : "loaded"}`);
     return loaded;
   });
   const chatHandler = createChatCompletionsHandler(env, agentsMdCachePromise);

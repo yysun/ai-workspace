@@ -12,8 +12,8 @@ async function main(): Promise<void> {
   const env = loadEnv(process.env);
   const app = createServer(env);
   const server = app.listen(env.port, () => {
-    console.log(`ai-workspace listening on port ${env.port}`);
-    console.log(`workspace root: ${env.workspaceRoot}`);
+    console.log(`[server] listening on port ${env.port}`);
+    console.log(`[workspace] ${env.workspaceRoot}`);
   });
 
   const shutdown = (signal: NodeJS.Signals) => {

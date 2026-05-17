@@ -169,7 +169,7 @@ export function createChatCompletionsHandler(env: EnvConfig, agentsMdCachePromis
       const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
       const userDataRoot = path.join(workspaceRoot, "users", sanitizedUserId);
 
-      console.log(`[chat] userId=${userId} workspaceRoot=${workspaceRoot} userDataRoot=${userDataRoot}`);
+      console.log(`[chat] userId=${userId}`);
       try {
         await mkdir(userDataRoot, { recursive: true });
       } catch (error) {
@@ -195,8 +195,8 @@ export function createChatCompletionsHandler(env: EnvConfig, agentsMdCachePromis
         temperature: chatRequest.temperature,
         maxTokens: chatRequest.max_tokens,
         metadata: chatRequest.metadata,
+        userId,
         workspaceRoot,
-        userDataRoot,
         agentsMd: agentsMdCache.content,
         accessToken: token,
         signal: abortController.signal

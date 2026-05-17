@@ -34,8 +34,8 @@ export type RunChatCompletionInput = {
   temperature?: number;
   maxTokens?: number;
   metadata?: Record<string, unknown>;
+  userId: string;
   workspaceRoot: string;
-  userDataRoot?: string;
   agentsMd?: string | null;
   accessToken?: string;
   signal?: AbortSignal;

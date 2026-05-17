@@ -255,7 +255,7 @@ export async function* runChatCompletion(
 ): AsyncIterable<RuntimeEvent> {
   let restoreWorkspaceEnv: () => void = () => undefined;
   let environment: LLMRuntime | undefined;
-  const workingDirectory = input.userDataRoot ?? input.workspaceRoot;
+  const workingDirectory = input.workspaceRoot;
 
   try {
     const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
@@ -279,7 +279,9 @@ export async function* runChatCompletion(
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
       model: runtimeTarget.model,
-      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd),
+      messages: buildRuntimeMessages(input.messages as ChatMessage[], agentsMd, {
+        userId: input.userId
+      }),
       temperature: resolveTemperature(input, env),
       maxTokens: resolveMaxTokens(input, env),
       maxConsecutiveToolTurns: env.llmMaxConsecutiveToolTurns ?? DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS,
