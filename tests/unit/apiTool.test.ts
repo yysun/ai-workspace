@@ -32,6 +32,17 @@ test("resolveApiRequestUrl rejects base-path escapes", () => {
   );
 });
 
+test("api_request requires host-provided userId when configured", () => {
+  assert.throws(
+    () => createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      }
+    }),
+    /api_request requires userId/
+  );
+});
+
 test("api_request applies auth headers, query params, and parses JSON responses", async () => {
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
@@ -42,6 +53,7 @@ test("api_request applies auth headers, query params, and parses JSON responses"
       API_ACCESS_TOKEN: "workspace-token",
       API_SECURITY_CONTEXT: "tenant-123"
     },
+    userId: "user-7",
     fetchImpl: async (input, init) => {
       capturedUrl = input instanceof URL ? input.toString() : String(input);
       capturedInit = init;
@@ -152,6 +164,7 @@ test("api_request rejects absolute outputFilePath values", async () => {
         API_BASE_URL: "https://api.example.test/v1"
       },
       workspaceRoot: tempDir,
+      userId: "user-7",
       fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
         status: 200,
         statusText: "OK",
@@ -186,6 +199,7 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
           API_BASE_URL: "https://api.example.test/v1"
         },
         workspaceRoot: tempDir,
+        userId: "user-7",
         fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
           status: 200,
           statusText: "OK",
@@ -201,7 +215,7 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
           path: "/notes",
           outputFilePath: "linked-output/notes.json"
         }, {}),
-        /api_request outputFilePath must stay within output\/api-responses/
+        /api_request outputFilePath must stay within users\/user-7\/data\/api-responses/
       );
     } finally {
       await rm(outsideDir, { recursive: true, force: true });

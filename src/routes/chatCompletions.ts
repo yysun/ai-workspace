@@ -5,7 +5,6 @@
  */
 
 import { mkdir } from "node:fs/promises";
-import path from "node:path";
 import type { RequestHandler, Request } from "express";
 import type { EnvConfig } from "../config/env.js";
 import { resolveUserId, UserIdResolutionError } from "../auth/resolveUserId.js";
@@ -14,7 +13,7 @@ import type { ChatCompletionRequest, ChatMessage, RuntimeEvent } from "../runtim
 import { mapRuntimeEvent } from "../sse/mapRuntimeEvent.js";
 import { writeSseHeaders, writeSseEvent, writeSseDone } from "../sse/writeSse.js";
 import type { LoadedAgentsMd } from "../workspace/loadAgentsMd.js";
-import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
+import { resolveUserWorkspaceRoot, resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type HttpError = Error & { statusCode?: number };
 
@@ -165,9 +164,8 @@ export function createChatCompletionsHandler(env: EnvConfig, agentsMdCachePromis
       const chatRequest = parseRequestBody(req.body);
       const agentsMdCache = await agentsMdCachePromise;
       const abortController = new AbortController();
-      const sanitizedUserId = userId.replace(/[/\\.\0]/g, "_");
       const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
-      const userDataRoot = path.join(workspaceRoot, "users", sanitizedUserId);
+      const userDataRoot = resolveUserWorkspaceRoot(workspaceRoot, userId);
 
       console.log(`[chat] userId=${userId}`);
       try {

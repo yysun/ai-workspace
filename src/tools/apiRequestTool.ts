@@ -8,6 +8,7 @@ import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveApiResponseDirectory, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const API_TOOL_NAME = "api_request";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
@@ -31,7 +32,7 @@ type ApiToolConfig = {
 
 type ApiResponseStorage = {
   workspaceRoot?: string;
-  userId?: string;
+  userId: string;
   inlineBodyByteLimit: number;
   workspaceRootRealPathPromise?: Promise<string>;
 };
@@ -155,18 +156,6 @@ function trimOptionalPath(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function sanitizeUserIdForPath(userId: string | undefined): string | undefined {
-  const sanitizedUserId = userId?.trim().replace(/[/\\.\0]/g, "_");
-  return sanitizedUserId ? sanitizedUserId : undefined;
-}
-
-function resolveApiResponseDirectory(workspaceRoot: string, userId: string | undefined): string {
-  const sanitizedUserId = sanitizeUserIdForPath(userId);
-  return sanitizedUserId
-    ? path.join(workspaceRoot, "users", sanitizedUserId, "data", "api-responses")
-    : path.join(workspaceRoot, "output", "api-responses");
-}
-
 async function resolveExistingPathRealPath(candidatePath: string): Promise<string | null> {
   try {
     return await realpath(candidatePath);
@@ -203,7 +192,7 @@ async function resolveNearestExistingParentRealPath(candidatePath: string): Prom
 async function resolveWorkspaceOutputPath(
   workspaceRoot: string,
   workspaceRootRealPathPromise: Promise<string>,
-  userId: string | undefined,
+  userId: string,
   requestedPath: string
 ): Promise<string> {
   if (path.isAbsolute(requestedPath)) {
@@ -252,7 +241,7 @@ function inferResponseExtension(contentType: string | null): string {
   return "txt";
 }
 
-function createAutomaticResponsePath(workspaceRoot: string, userId: string | undefined, contentType: string | null): string {
+function createAutomaticResponsePath(workspaceRoot: string, userId: string, contentType: string | null): string {
   return path.join(
     resolveApiResponseDirectory(workspaceRoot, userId),
     `api-response-${randomUUID()}.${inferResponseExtension(contentType)}`
@@ -447,6 +436,7 @@ export function createApiRequestTool(options: {
   if (!config) {
     return null;
   }
+  const userId = trimRequiredUserId(options.userId);
 
   return {
     name: API_TOOL_NAME,
@@ -489,9 +479,18 @@ export function createApiRequestTool(options: {
     },
     execute: async (args, context) => await executeApiRequest(config, {
       workspaceRoot: options.workspaceRoot,
-      userId: options.userId,
+      userId,
       inlineBodyByteLimit: options.inlineBodyByteLimit ?? DEFAULT_INLINE_BODY_BYTE_LIMIT,
       workspaceRootRealPathPromise
     }, args, context, fetchImpl)
   };
+}
+
+function trimRequiredUserId(value: string | undefined): string {
+  const userId = value?.trim();
+  if (!userId) {
+    throw new Error("api_request requires userId");
+  }
+
+  return sanitizeUserIdForPath(userId, "api_request requires userId");
 }

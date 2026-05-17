@@ -82,7 +82,8 @@ test("api_request reaches a local HTTP server with host-owned auth and base-path
         API_BASE_URL: `http://127.0.0.1:${port}/v1`,
         API_ACCESS_TOKEN: "workspace-token",
         API_SECURITY_CONTEXT: "tenant-42"
-      }
+      },
+      userId: "user-7"
     });
 
     assert.ok(tool?.execute);

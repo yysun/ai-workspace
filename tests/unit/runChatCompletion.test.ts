@@ -5,6 +5,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   createRequestTools,
@@ -12,6 +15,15 @@ import {
   prepareToolCallArguments,
   redactToolResultForEvent
 } from "../../src/runtime/runChatCompletion.js";
+
+async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 test("createRequestTools always includes workspace_read_file and conditionally includes api_request", () => {
   assert.deepEqual(
@@ -24,6 +36,50 @@ test("createRequestTools always includes workspace_read_file and conditionally i
       API_BASE_URL: "https://api.example.test/root"
     }, "3").map((tool) => tool.name),
     ["workspace_read_file", "api_request"]
+  );
+});
+
+test("createRequestTools includes AIW storage tools when AIW storage is configured", () => {
+  assert.deepEqual(
+    createRequestTools("/workspace", {
+      AIW_STORAGE: "file"
+    }, "3").map((tool) => tool.name),
+    [
+      "workspace_read_file",
+      "resolve_object",
+      "search_content",
+      "list_content",
+      "read_content",
+      "write_content",
+      "create_content",
+      "delete_content"
+    ]
+  );
+});
+
+test("createRequestTools uses the request workspace root for AIW file storage when no override is set", async () => {
+  await withTempDir("ai-workspace-request-tools-", async (workspaceRoot) => {
+    const tools = Object.fromEntries(
+      createRequestTools(workspaceRoot, {
+        AIW_STORAGE: "file"
+      }, "3").map((tool) => [tool.name, tool])
+    );
+
+    const writeResult = await tools.write_content?.execute({
+      path: "data/accounts/a123/memory.md",
+      content: "Stored in the request workspace root."
+    });
+    assert.equal(writeResult?.ok, true);
+
+    const storedContent = await readFile(path.join(workspaceRoot, "users/3/data/accounts/a123/memory.md"), "utf8");
+    assert.equal(storedContent, "Stored in the request workspace root.");
+  });
+});
+
+test("createRequestTools requires a host-provided userId for all request tools", () => {
+  assert.throws(
+    () => createRequestTools("/workspace", {}, " "),
+    /userId is required/
   );
 });
 

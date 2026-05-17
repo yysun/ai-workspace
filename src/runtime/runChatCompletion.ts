@@ -12,6 +12,8 @@ import {
   type LLMToolCall
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
+import { createWorkspaceProvider } from "../storage/providers/index.js";
+import { createAiwTools } from "../storage/tools/aiwTools.js";
 import { createApiRequestTool } from "../tools/apiRequestTool.js";
 import { createReadFileTool } from "../tools/readFileTool.js";
 import {
@@ -24,6 +26,7 @@ import {
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
 import { applyWorkspaceEnv } from "../workspace/loadWorkspaceEnv.js";
+import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type RuntimeState = {
   messages: LLMChatMessage[];
@@ -35,6 +38,7 @@ type RuntimeState = {
 const REJECTED_TEXT_RETRY_LIMIT = 2;
 const DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS = 24;
 const DEFAULT_MAX_WALL_TIME_MS = 15 * 60 * 1000;
+const AIW_TOOL_CONFIG_KEYS = ["AIW_STORAGE", "AIW_MSSQL_CONNECTION_STRING"] as const;
 
 function createRejectedTextTerminalError(reason: string): string {
   if (reason === "rejected_text_response") {
@@ -251,14 +255,49 @@ function isHumanInputToolName(toolName: string): boolean {
   return HUMAN_INPUT_TOOL_NAMES.has(toolName);
 }
 
-export function createRequestTools(workspaceRoot: string, envSource: NodeJS.ProcessEnv, userId: string): LLMToolDefinition[] {
-  const tools: LLMToolDefinition[] = [createReadFileTool({ workspaceRoot })];
-  const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot, userId });
+export function createRequestTools(
+  workspaceRoot: string,
+  envSource: NodeJS.ProcessEnv,
+  userId: string,
+  registerCloser: (close: () => Promise<void>) => void = () => undefined
+): LLMToolDefinition[] {
+  const scopedUserId = requireUserId(userId);
+  const requestWorkspaceRoot = resolveWorkspaceRoot(workspaceRoot);
+  const storageEnvSource = {
+    ...envSource,
+    WORKSPACE_ROOT: requestWorkspaceRoot
+  };
+  const tools: LLMToolDefinition[] = [createReadFileTool({ workspaceRoot: requestWorkspaceRoot })];
+  const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot: requestWorkspaceRoot, userId: scopedUserId });
   if (apiRequestTool) {
     tools.push(apiRequestTool);
   }
 
+  if (hasAiwToolConfig(envSource)) {
+    const provider = createWorkspaceProvider({
+      envSource: storageEnvSource,
+      userId: scopedUserId
+    });
+    tools.push(...createAiwTools(provider));
+    if (provider.close) {
+      registerCloser(() => provider.close?.() ?? Promise.resolve());
+    }
+  }
+
   return tools;
+}
+
+function hasAiwToolConfig(envSource: NodeJS.ProcessEnv): boolean {
+  return AIW_TOOL_CONFIG_KEYS.some((key) => !!envSource[key]?.trim());
+}
+
+function requireUserId(userId: string): string {
+  const trimmed = userId.trim();
+  if (!trimmed) {
+    throw new Error("userId is required for request tools");
+  }
+
+  return trimmed;
 }
 
 export async function* runChatCompletion(
@@ -267,6 +306,7 @@ export async function* runChatCompletion(
 ): AsyncIterable<RuntimeEvent> {
   let restoreWorkspaceEnv: () => void = () => undefined;
   let environment: LLMRuntime | undefined;
+  const toolClosers: Array<() => Promise<void>> = [];
   const workingDirectory = input.workspaceRoot;
   const toolStartedAt = new Map<string, number>();
 
@@ -286,7 +326,9 @@ export async function* runChatCompletion(
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
-    const extraTools = createRequestTools(input.workspaceRoot, requestEnv, input.userId);
+    const extraTools = createRequestTools(input.workspaceRoot, requestEnv, input.userId, (close) => {
+      toolClosers.push(close);
+    });
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -422,6 +464,9 @@ export async function* runChatCompletion(
       error: message
     };
   } finally {
+    await Promise.all(toolClosers.map(async (close) => {
+      await close().catch(() => undefined);
+    }));
     restoreWorkspaceEnv();
     if (environment) {
       await environment.dispose().catch(() => undefined);
