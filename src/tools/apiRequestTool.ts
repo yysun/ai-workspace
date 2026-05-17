@@ -4,15 +4,18 @@
  * Recent changes: restricts file-backed response persistence to tool-owned api-responses directories and applies realpath-based boundary checks for write targets.
  */
 
+import type { Dirent } from "node:fs";
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveApiResponseDirectory, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const API_TOOL_NAME = "api_request";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
 const DEFAULT_INLINE_BODY_BYTE_LIMIT = 32 * 1024;
+const DEFAULT_AUTO_RESPONSE_FILE_LIMIT = 20;
+const AUTOMATIC_RESPONSE_FILE_PREFIX = "api-response-";
 const SUPPORTED_API_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const REDACTED_RESPONSE_HEADER_NAMES = new Set([
   "authorization",
@@ -34,6 +37,7 @@ type ApiResponseStorage = {
   workspaceRoot?: string;
   userId: string;
   inlineBodyByteLimit: number;
+  autoResponseFileLimit: number;
   workspaceRootRealPathPromise?: Promise<string>;
 };
 
@@ -244,13 +248,72 @@ function inferResponseExtension(contentType: string | null): string {
 function createAutomaticResponsePath(workspaceRoot: string, userId: string, contentType: string | null): string {
   return path.join(
     resolveApiResponseDirectory(workspaceRoot, userId),
-    `api-response-${randomUUID()}.${inferResponseExtension(contentType)}`
+    `${AUTOMATIC_RESPONSE_FILE_PREFIX}${randomUUID()}.${inferResponseExtension(contentType)}`
   );
 }
 
 async function persistResponseBody(filePath: string, rawBody: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, rawBody, "utf8");
+}
+
+async function cleanupAutomaticResponseFiles(directoryPath: string, fileLimit: number): Promise<void> {
+  if (fileLimit < 1) {
+    return;
+  }
+
+  let entries: Dirent<string>[];
+  try {
+    entries = await readdir(directoryPath, { withFileTypes: true });
+  } catch (error) {
+    if (toNodeErrorCode(error) === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  const automaticFiles = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(AUTOMATIC_RESPONSE_FILE_PREFIX))
+      .map(async (entry) => {
+        const filePath = path.join(directoryPath, entry.name);
+        try {
+          const fileStats = await stat(filePath);
+          return {
+            filePath,
+            name: entry.name,
+            modifiedAt: fileStats.mtimeMs,
+            createdAt: fileStats.birthtimeMs
+          };
+        } catch (error) {
+          if (toNodeErrorCode(error) === "ENOENT") {
+            return null;
+          }
+
+          throw error;
+        }
+      })
+  );
+
+  const staleFiles = automaticFiles
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((left, right) => {
+      if (right.modifiedAt !== left.modifiedAt) {
+        return right.modifiedAt - left.modifiedAt;
+      }
+
+      if (right.createdAt !== left.createdAt) {
+        return right.createdAt - left.createdAt;
+      }
+
+      return right.name.localeCompare(left.name);
+    })
+    .slice(fileLimit);
+
+  await Promise.all(staleFiles.map(async (entry) => {
+    await rm(entry.filePath, { force: true });
+  }));
 }
 
 function toWorkspaceRelativePath(workspaceRoot: string, filePath: string): string {
@@ -363,8 +426,8 @@ async function executeApiRequest(
   fetchImpl: typeof fetch
 ): Promise<unknown> {
   const method = parseMethod(args.method);
-  const path = parsePath(args.path);
-  const url = resolveApiRequestUrl(config.baseUrl, path, args.query);
+  const requestPath = parsePath(args.path);
+  const url = resolveApiRequestUrl(config.baseUrl, requestPath, args.query);
   const headers = buildRequestHeaders(config, args.headers);
   const body = serializeRequestBody(method, args.body, headers);
 
@@ -397,6 +460,10 @@ async function executeApiRequest(
 
     await persistResponseBody(resolvedOutputPath, rawBody);
 
+    if (!requestedOutputFilePath) {
+      await cleanupAutomaticResponseFiles(path.dirname(resolvedOutputPath), storage.autoResponseFileLimit);
+    }
+
     return {
       ok: response.ok,
       status: response.status,
@@ -425,6 +492,7 @@ export function createApiRequestTool(options: {
   userId?: string;
   fetchImpl?: typeof fetch;
   inlineBodyByteLimit?: number;
+  autoResponseFileLimit?: number;
 } = {}): LLMToolDefinition | null {
   const envSource = options.envSource ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -481,6 +549,7 @@ export function createApiRequestTool(options: {
       workspaceRoot: options.workspaceRoot,
       userId,
       inlineBodyByteLimit: options.inlineBodyByteLimit ?? DEFAULT_INLINE_BODY_BYTE_LIMIT,
+      autoResponseFileLimit: options.autoResponseFileLimit ?? DEFAULT_AUTO_RESPONSE_FILE_LIMIT,
       workspaceRootRealPathPromise
     }, args, context, fetchImpl)
   };

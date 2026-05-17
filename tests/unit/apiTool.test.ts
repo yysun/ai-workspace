@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -292,5 +292,52 @@ test("api_request automatically spills oversized responses to a user-scoped file
 
     const savedBody = await readFile(path.join(tempDir, typedResult.bodyFilePath), "utf8");
     assert.equal(savedBody, largeBody);
+  });
+});
+
+test("api_request cleans up older auto-spilled response files without deleting named outputs", async () => {
+  await withTempDir(async (tempDir) => {
+    let responseNumber = 0;
+    const tool = createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      },
+      workspaceRoot: tempDir,
+      userId: "user-7",
+      inlineBodyByteLimit: 8,
+      autoResponseFileLimit: 2,
+      fetchImpl: async () => {
+        responseNumber += 1;
+        return new Response(JSON.stringify({ responseNumber, payload: "x".repeat(64) }), {
+          status: 200,
+          statusText: "OK",
+          headers: {
+            "content-type": "application/json"
+          }
+        });
+      }
+    });
+
+    await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      outputFilePath: "users/user-7/data/api-responses/pinned.json"
+    }, {});
+
+    const first = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
+    await utimes(path.join(tempDir, first.bodyFilePath), new Date("2026-05-01T00:00:00.000Z"), new Date("2026-05-01T00:00:00.000Z"));
+
+    const second = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
+    await utimes(path.join(tempDir, second.bodyFilePath), new Date("2026-05-02T00:00:00.000Z"), new Date("2026-05-02T00:00:00.000Z"));
+
+    const third = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
+
+    await assert.rejects(
+      async () => await access(path.join(tempDir, first.bodyFilePath)),
+      /ENOENT/
+    );
+    await access(path.join(tempDir, second.bodyFilePath));
+    await access(path.join(tempDir, third.bodyFilePath));
+    await access(path.join(tempDir, "users/user-7/data/api-responses/pinned.json"));
   });
 });
