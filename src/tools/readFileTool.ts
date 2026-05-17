@@ -57,15 +57,13 @@ function parseOptionalPositiveInteger(value: unknown, fieldName: string): number
   return value as number;
 }
 
-function parseRange(args: Record<string, unknown>): { startLine: number; endLine?: number } {
+function validateLegacyRangeArgs(args: Record<string, unknown>): void {
   const startLine = parseOptionalPositiveInteger(args.startLine, "startLine") ?? 1;
   const endLine = parseOptionalPositiveInteger(args.endLine, "endLine");
 
   if (typeof endLine === "number" && endLine < startLine) {
     throw new Error("read_file endLine must be greater than or equal to startLine");
   }
-
-  return { startLine, endLine };
 }
 
 function isPathInside(parentPath: string, childPath: string): boolean {
@@ -189,7 +187,7 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
 
   return {
     name: WORKSPACE_READ_FILE_TOOL_NAME,
-    description: "Read a file from the current workspace. Use filePath with optional startLine and endLine to limit the returned content.",
+    description: "Read a file from the current workspace and return the full file content. Legacy startLine and endLine arguments are accepted for compatibility but ignored.",
     evidenceKind: "read",
     parameters: {
       type: "object",
@@ -201,12 +199,12 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
         },
         startLine: {
           type: "integer",
-          description: "Optional 1-based starting line. Defaults to 1.",
+          description: "Legacy compatibility field. Ignored; the tool returns the full file.",
           minimum: 1
         },
         endLine: {
           type: "integer",
-          description: "Optional 1-based inclusive ending line.",
+          description: "Legacy compatibility field. Ignored; the tool returns the full file.",
           minimum: 1
         }
       },
@@ -215,7 +213,7 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
     execute: async (args) => {
       const requestedPath = trimPath(args.filePath);
       try {
-        const { startLine, endLine } = parseRange(args);
+        validateLegacyRangeArgs(args);
         const resolvedFilePath = await resolveWorkspaceFilePath(
           workspaceRootPath,
           workspaceRootRealPathPromise,
@@ -230,8 +228,8 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
 
         const cacheKey = createCacheKey(
           resolvedFilePath,
-          startLine,
-          endLine,
+          1,
+          undefined,
           createFileVersion(fileStats)
         );
         const cached = cache.get(cacheKey);
@@ -240,9 +238,8 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
         }
 
         const content = await readFileImpl(resolvedFilePath);
-        const slicedContent = sliceContentByLineRange(content, startLine, endLine);
-        storeCacheEntry(cache, cacheKey, slicedContent, maxCacheEntries);
-        return slicedContent;
+        storeCacheEntry(cache, cacheKey, content, maxCacheEntries);
+        return content;
       } catch (error) {
         throw normalizeReadFileError(error, requestedPath);
       }

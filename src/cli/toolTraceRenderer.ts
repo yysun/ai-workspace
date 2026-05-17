@@ -404,7 +404,9 @@ function summarizeReadFileResult(
     ? result
     : readFirstString(record, "content", "text", "result");
   const lineCount = content ? countLines(content) : null;
-  const requestedLineSummary = formatRequestedLineSummary(callArgs);
+  const requestedLineSummary = toolName === WORKSPACE_READ_FILE_TOOL_NAME
+    ? null
+    : formatRequestedLineSummary(callArgs);
   return {
     name: toolName,
     ok: inferOk(record, true),

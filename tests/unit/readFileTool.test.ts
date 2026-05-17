@@ -36,11 +36,11 @@ test("createReadFileTool reuses cached content for identical reads", async () =>
       }
     });
 
-    const firstResult = await tool.execute?.({ filePath: "notes.md", startLine: 2, endLine: 3 });
-    const secondResult = await tool.execute?.({ filePath: "notes.md", startLine: 2, endLine: 3 });
+    const firstResult = await tool.execute?.({ filePath: "notes.md" });
+    const secondResult = await tool.execute?.({ filePath: "notes.md" });
 
-    assert.equal(firstResult, "beta\ngamma\n");
-    assert.equal(secondResult, "beta\ngamma\n");
+    assert.equal(firstResult, "alpha\nbeta\ngamma\n");
+    assert.equal(secondResult, "alpha\nbeta\ngamma\n");
     assert.equal(readCount, 1);
   });
 });
@@ -61,13 +61,25 @@ test("createReadFileTool invalidates the cache when the file version changes", a
       }
     });
 
-    const firstResult = await tool.execute?.({ filePath: "notes.md", startLine: 2, endLine: 2 });
+    const firstResult = await tool.execute?.({ filePath: "notes.md" });
     await writeFile(filePath, "alpha\nbeta updated\ngamma\n", "utf8");
-    const secondResult = await tool.execute?.({ filePath: "notes.md", startLine: 2, endLine: 2 });
+    const secondResult = await tool.execute?.({ filePath: "notes.md" });
 
-    assert.equal(firstResult, "beta\n");
-    assert.equal(secondResult, "beta updated\n");
+    assert.equal(firstResult, "alpha\nbeta\ngamma\n");
+    assert.equal(secondResult, "alpha\nbeta updated\ngamma\n");
     assert.equal(readCount, 2);
+  });
+});
+
+test("createReadFileTool ignores legacy line-range args and still returns full content", async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, "notes.md");
+    await writeFile(filePath, "alpha\nbeta\ngamma\ndelta\n", "utf8");
+
+    const tool = createReadFileTool({ workspaceRoot: tempDir, cache: new Map<string, string>() });
+    const result = await tool.execute?.({ filePath: "notes.md", startLine: 1, endLine: 2 });
+
+    assert.equal(result, "alpha\nbeta\ngamma\ndelta\n");
   });
 });
 

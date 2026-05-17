@@ -425,6 +425,27 @@ test("formatToolResultEventLine suppresses workspace_read_file previews", () => 
   );
 });
 
+test("formatToolResultEventLine ignores requested line ranges for workspace_read_file", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "workspace_read_file",
+      "alpha\nbeta\ngamma\ndelta\n",
+      "default",
+      {
+        filePath: "users/3/data/contacts/99000002/current/sources.md",
+        startLine: 1,
+        endLine: 200
+      },
+      2
+    ),
+    [
+      "",
+      "  ✓ workspace_read_file 2ms · 4 lines",
+      ""
+    ].join("\n")
+  );
+});
+
 test("formatToolResultEventLine uses event timing for shell_cmd markdown results", () => {
   assert.equal(
     formatToolResultEventLine(
