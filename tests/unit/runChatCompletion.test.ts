@@ -30,6 +30,7 @@ test("createRequestTools always includes workspace_read_file and conditionally i
     createRequestTools("/workspace", {}, "3").map((tool) => tool.name),
     [
       "workspace_read_file",
+      "marp_cli",
       "resolve_object",
       "search_content",
       "list_content",
@@ -46,6 +47,7 @@ test("createRequestTools always includes workspace_read_file and conditionally i
     }, "3").map((tool) => tool.name),
     [
       "workspace_read_file",
+      "marp_cli",
       "api_request",
       "resolve_object",
       "search_content",
@@ -65,6 +67,7 @@ test("createRequestTools includes AIW storage tools by default and honors explic
     }, "3").map((tool) => tool.name),
     [
       "workspace_read_file",
+      "marp_cli",
       "resolve_object",
       "search_content",
       "list_content",

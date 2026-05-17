@@ -198,6 +198,8 @@ Per request, the server:
 
 When `${WORKSPACE_ROOT}/.env` defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, observable tool events redact configured secrets, and `GET` calls can opt into in-memory caching with `cacheTtlMs` and `bypassCache`.
 
+The runtime also exposes a host-owned `marp_cli` tool that renders Markdown slide decks already stored in the workspace into HTML, PDF, PPTX, or notes files under workspace-controlled output paths.
+
 For external API tasks, prefer `api_request` for the configured workspace API surface, prefer `shell_cmd` when the workspace instructions or API guide explicitly require authenticated `curl` calls, and prefer `web_fetch` only for simple unauthenticated fetches.
 
 ## Environment

@@ -33,6 +33,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "If an external API or network lookup is required, use an available tool instead of narrating intent.",
   "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host. Responses are returned inline by default; pass outputFilePath under the current user's workspace directory only when you want the body saved to disk and the path returned explicitly. For repeatable GET requests, pass cacheTtlMs to enable in-memory caching and bypassCache when you need a refresh.",
   "When available, prefer `workspace_read_file` for workspace file reads; it is host-owned and truncates oversized reads to stay within the token budget.",
+  "When the user asks for slides or a deck, prefer `marp_cli` to render Markdown slide decks into workspace HTML, PDF, PPTX, or notes outputs instead of describing the conversion steps.",
   "Prefer `shell_cmd` for authenticated API work only when workspace instructions explicitly require `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
   "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
   "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",

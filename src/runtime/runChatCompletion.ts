@@ -15,6 +15,7 @@ import type { EnvConfig } from "../config/env.js";
 import { createWorkspaceProvider } from "../storage/providers/index.js";
 import { createAiwTools } from "../storage/tools/aiwTools.js";
 import { createApiRequestTool } from "../tools/apiRequestTool.js";
+import { createMarpCliTool } from "../tools/marpCliTool.js";
 import { createReadFileTool } from "../tools/readFileTool.js";
 import {
   buildRuntimeMessages,
@@ -268,7 +269,10 @@ export function createRequestTools(
     ...envSource,
     WORKSPACE_ROOT: requestWorkspaceRoot
   };
-  const tools: LLMToolDefinition[] = [createReadFileTool({ workspaceRoot: requestWorkspaceRoot })];
+  const tools: LLMToolDefinition[] = [
+    createReadFileTool({ workspaceRoot: requestWorkspaceRoot }),
+    createMarpCliTool({ workspaceRoot: requestWorkspaceRoot })
+  ];
   const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot: requestWorkspaceRoot, userId: scopedUserId });
   if (apiRequestTool) {
     tools.push(apiRequestTool);
