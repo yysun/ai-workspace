@@ -977,7 +977,7 @@ export async function streamAssistantTurn(
   };
   let sawToolActivity = false;
   const humanInputRequests: PendingHumanInputRequest[] = [];
-  const pendingPathExistsCalls = new Map<string, unknown>();
+  const pendingToolCalls = new Map<string, { name: string; args: unknown }>();
   const assistantDisplay = createAssistantPendingDisplay(output);
 
   assistantDisplay.start();
@@ -1011,8 +1011,11 @@ export async function streamAssistantTurn(
               toolCallId
             )
           );
-          if (inlinePathExists) {
-            pendingPathExistsCalls.set(toolCallId, payload.args);
+          if (toolCallId.length > 0) {
+            pendingToolCalls.set(toolCallId, {
+              name: payload.name,
+              args: payload.args
+            });
           }
           if (!shouldSuppressHumanInputToolEventLine("tool.call", payload.name, payload.args, toolCallId)) {
             if (inlinePathExists) {
@@ -1029,11 +1032,18 @@ export async function streamAssistantTurn(
 
       if (event.event === "tool.result") {
         sawToolActivity = true;
-        const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown }>(event);
+        const payload = parseRuntimePayload<{ name?: unknown; args?: unknown; result?: unknown; toolCallId?: unknown; durationMs?: unknown }>(event);
         if (typeof payload?.name === "string") {
           const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
-          const inlinePathExistsArgs = payload.name === "path_exists" && toolCallId.length > 0
-            ? pendingPathExistsCalls.get(toolCallId)
+          const pendingToolCall = toolCallId.length > 0 ? pendingToolCalls.get(toolCallId) : undefined;
+          const inlinePathExistsArgs = payload.name === "path_exists" && pendingToolCall?.name === "path_exists"
+            ? pendingToolCall.args
+            : undefined;
+          const toolCallArgs = typeof payload.args !== "undefined"
+            ? payload.args
+            : (pendingToolCall?.name === payload.name ? pendingToolCall.args : undefined);
+          const toolDurationMs = typeof payload.durationMs === "number" && Number.isFinite(payload.durationMs)
+            ? payload.durationMs
             : undefined;
           appendHumanInputRequest(
             humanInputRequests,
@@ -1044,7 +1054,7 @@ export async function streamAssistantTurn(
             )
           );
           if (toolCallId.length > 0) {
-            pendingPathExistsCalls.delete(toolCallId);
+            pendingToolCalls.delete(toolCallId);
           }
           if (!shouldSuppressHumanInputToolEventLine("tool.result", payload.name, payload.result, toolCallId)) {
             if (typeof inlinePathExistsArgs !== "undefined") {
@@ -1063,7 +1073,7 @@ export async function streamAssistantTurn(
               }
             }
             assistantDisplay.clearPending();
-            errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result, options.traceMode), errorOutput)}`);
+            errorOutput.write(`${formatGray(formatToolResultEventLine(payload.name, payload.result, options.traceMode, toolCallArgs, toolDurationMs), errorOutput)}`);
             if (progress.assistantText) {
               assistantDisplay.resumeAfterInterruption(progress.assistantText);
             }

@@ -168,6 +168,29 @@ function formatLineCount(lineCount: number): string {
   return `${lineCount} line${lineCount === 1 ? "" : "s"}`;
 }
 
+function formatRequestedLineSummary(args: unknown): string | null {
+  if (!isRecord(args)) {
+    return null;
+  }
+
+  const startLine = readFirstNumber(args, "startLine");
+  const endLine = readFirstNumber(args, "endLine");
+
+  if (startLine !== null && endLine !== null && startLine > 0 && endLine >= startLine) {
+    return startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`;
+  }
+
+  if (startLine !== null && startLine > 0) {
+    return `from line ${startLine}`;
+  }
+
+  if (endLine !== null && endLine > 0) {
+    return `through line ${endLine}`;
+  }
+
+  return null;
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} B`;
@@ -364,17 +387,18 @@ function summarizeSearchFilesResult(result: unknown, forcedDurationMs?: number):
   };
 }
 
-function summarizeReadFileResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+function summarizeReadFileResult(result: unknown, forcedDurationMs?: number, callArgs?: unknown): ToolResultView {
   const record = parseJsonRecord(result);
   const content = typeof result === "string"
     ? result
     : readFirstString(record, "content", "text", "result");
   const lineCount = content ? countLines(content) : null;
+  const requestedLineSummary = formatRequestedLineSummary(callArgs);
   return {
     name: "read_file",
     ok: inferOk(record, true),
     durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
-    summary: lineCount === null ? "completed" : formatLineCount(lineCount),
+    summary: requestedLineSummary ?? (lineCount === null ? "completed" : formatLineCount(lineCount)),
     raw: result
   };
 }
@@ -540,7 +564,7 @@ export function summarizeToolCall(toolName: string, args: unknown): ToolCallView
   return { name: toolName, summary: summarizeGenericCall(args), args };
 }
 
-export function summarizeToolResult(toolName: string, result: unknown, durationMs?: number): ToolResultView {
+export function summarizeToolResult(toolName: string, result: unknown, durationMs?: number, callArgs?: unknown): ToolResultView {
   if (toolName === "shell_cmd") {
     return summarizeShellToolResult(result, durationMs);
   }
@@ -550,7 +574,7 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
   }
 
   if (toolName === "read_file") {
-    return summarizeReadFileResult(result, durationMs);
+    return summarizeReadFileResult(result, durationMs, callArgs);
   }
 
   if (toolName === "path_exists") {
@@ -604,15 +628,22 @@ export function formatToolEventLine(
   kind: "tool.call" | "tool.result",
   name: string,
   payload: unknown,
-  mode: TraceMode = "default"
+  mode: TraceMode = "default",
+  callArgs?: unknown
 ): string {
   return kind === "tool.call"
     ? renderToolCall(summarizeToolCall(name, payload), mode)
-    : renderToolResult(summarizeToolResult(name, payload), mode);
+    : renderToolResult(summarizeToolResult(name, payload, undefined, callArgs), mode);
 }
 
-export function formatToolResultEventLine(name: string, result: unknown, mode: TraceMode = "default"): string {
-  return renderToolResult(summarizeToolResult(name, result), mode);
+export function formatToolResultEventLine(
+  name: string,
+  result: unknown,
+  mode: TraceMode = "default",
+  callArgs?: unknown,
+  durationMs?: number
+): string {
+  return renderToolResult(summarizeToolResult(name, result, durationMs, callArgs), mode);
 }
 
 export function formatInlinePathExistsEventLine(

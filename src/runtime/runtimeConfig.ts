@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
- * Recent changes: delegates built-in tool selection to llm-runtime and uses generic LLM_* runtime defaults.
+ * Recent changes: disables the built-in read_file so a host-owned cached replacement can be registered per request.
  */
 
 import type {
@@ -173,7 +173,7 @@ export function createBuiltInSelection(): BuiltInToolSelection {
     web_fetch: false,
     load_skill: false,
     ask_user_input: true,
-    read_file: true,
+    read_file: false,
     write_file: true,
     list_files: true,
     search_files: true,

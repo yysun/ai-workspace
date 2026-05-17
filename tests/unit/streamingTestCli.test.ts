@@ -340,7 +340,7 @@ test("formatToolResultEventLine summarizes shell command results with preview li
     })),
     [
       "",
-      "  ✓ 123ms · stdout 1 line",
+      "  ✓ shell_cmd 123ms · stdout 1 line",
       "    saved",
       ""
     ].join("\n")
@@ -378,9 +378,53 @@ test("formatToolResultEventLine summarizes path_exists results structurally", ()
     ].join("\n")),
     [
       "",
-      "  ✓ true",
+      "  ✓ path_exists true",
       "    path: /Users/esun/Documents/Projects/crm-ai-workspace/.env",
       "    type: file",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine prefers requested read_file line ranges", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "read_file",
+      "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\n",
+      "default",
+      {
+        filePath: "data/contacts/4539/2026/05/09/insight.md",
+        startLine: 41,
+        endLine: 47
+      }
+    ),
+    [
+      "",
+      "  ✓ read_file lines 41-47",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine uses event timing for shell_cmd markdown results", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "shell_cmd",
+      [
+        "status: success",
+        "exit_code: 0",
+        "aborted: false",
+        "timed_out: false",
+        "stdout:",
+        "stderr:"
+      ].join("\n"),
+      "default",
+      undefined,
+      123
+    ),
+    [
+      "",
+      "  ✓ shell_cmd 123ms · completed",
       ""
     ].join("\n")
   );
@@ -457,7 +501,7 @@ test("streamAssistantTurn writes tool results using returned payloads", async ()
 
     assert.equal(turnResult.assistantText, "done");
     assert.match(errorOutput.text(), /↳ shell_cmd bash -lc "echo saved"/);
-    assert.match(errorOutput.text(), /✓ 12ms · stdout 1 line/);
+    assert.match(errorOutput.text(), /✓ shell_cmd 12ms · stdout 1 line/);
     assert.match(errorOutput.text(), /saved/);
     assert.doesNotMatch(errorOutput.text(), /\[tool\.result\] shell_cmd/);
   } finally {
@@ -476,7 +520,9 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
         type: "tool.call",
         name: "read_file",
         args: {
-          filePath: "data/contacts/4539/2026/05/09/insight.md"
+          filePath: "data/contacts/4539/2026/05/09/insight.md",
+          startLine: 41,
+          endLine: 47
         },
         toolCallId: "call_1"
       }
@@ -518,11 +564,11 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
 
     assert.match(
       sharedTerminal.text(),
-      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ 7 lines/u
+      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
     );
     assert.doesNotMatch(
       sharedTerminal.text(),
-      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ 7 lines/u
+      /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
     );
   } finally {
     global.fetch = originalFetch;
@@ -591,6 +637,75 @@ test("streamAssistantTurn renders path_exists as a single inline trace line", as
     assert.doesNotMatch(
       sharedTerminal.text(),
       /✓ false/u
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("streamAssistantTurn renders shell_cmd duration from tool.result payload when result is markdown", async () => {
+  const sharedTerminal = createWritableCapture(true);
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "shell_cmd",
+        args: {
+          command: "pwd",
+          parameters: []
+        },
+        toolCallId: "call_shell"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "shell_cmd",
+        result: [
+          "status: success",
+          "exit_code: 0",
+          "aborted: false",
+          "timed_out: false",
+          "stdout:",
+          "stderr:"
+        ].join("\n"),
+        durationMs: 42,
+        toolCallId: "call_shell"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
+
+    assert.match(
+      sharedTerminal.text(),
+      /↳ shell_cmd pwd(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ shell_cmd 42ms · completed/u
     );
   } finally {
     global.fetch = originalFetch;

@@ -1,17 +1,19 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken into requestEnv for multi-user support.
+ * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken and registers a host-owned cached read_file tool per request.
  */
 
 import {
   createRuntime,
   type LLMChatMessage,
   type LLMRuntime,
+  type LLMToolDefinition,
   type LLMToolCall
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import { createApiRequestTool } from "../tools/apiRequestTool.js";
+import { createReadFileTool } from "../tools/readFileTool.js";
 import {
   buildRuntimeMessages,
   createBuiltInSelection,
@@ -249,6 +251,16 @@ function isHumanInputToolName(toolName: string): boolean {
   return HUMAN_INPUT_TOOL_NAMES.has(toolName);
 }
 
+export function createRequestTools(workspaceRoot: string, envSource: NodeJS.ProcessEnv): LLMToolDefinition[] {
+  const tools: LLMToolDefinition[] = [createReadFileTool({ workspaceRoot })];
+  const apiRequestTool = createApiRequestTool({ envSource });
+  if (apiRequestTool) {
+    tools.push(apiRequestTool);
+  }
+
+  return tools;
+}
+
 export async function* runChatCompletion(
   input: RunChatCompletionInput,
   env: EnvConfig
@@ -256,6 +268,7 @@ export async function* runChatCompletion(
   let restoreWorkspaceEnv: () => void = () => undefined;
   let environment: LLMRuntime | undefined;
   const workingDirectory = input.workspaceRoot;
+  const toolStartedAt = new Map<string, number>();
 
   try {
     const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
@@ -273,8 +286,7 @@ export async function* runChatCompletion(
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
-    const apiRequestTool = createApiRequestTool({ envSource: requestEnv });
-    const extraTools = apiRequestTool ? [apiRequestTool] : undefined;
+    const extraTools = createRequestTools(input.workspaceRoot, requestEnv);
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -331,6 +343,8 @@ export async function* runChatCompletion(
           requestEnv
         );
 
+        toolStartedAt.set(event.toolCall.id, Date.now());
+
         yield {
           type: "tool.call",
           name: event.toolCall.function.name,
@@ -345,12 +359,18 @@ export async function* runChatCompletion(
           safeParseToolArguments(event.toolCall.function.arguments),
           requestEnv
         );
+        const startedAt = toolStartedAt.get(event.toolCall.id);
+        const durationMs = typeof startedAt === "number"
+          ? Math.max(0, Date.now() - startedAt)
+          : undefined;
+        toolStartedAt.delete(event.toolCall.id);
 
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,
           args: preparedArgs.eventArgs,
           toolCallId: event.toolCall.id,
+          durationMs,
           result: redactToolResultForEvent(event.result, requestEnv)
         };
       }
@@ -361,12 +381,18 @@ export async function* runChatCompletion(
           safeParseToolArguments(event.toolCall.function.arguments),
           requestEnv
         );
+        const startedAt = toolStartedAt.get(event.toolCall.id);
+        const durationMs = typeof startedAt === "number"
+          ? Math.max(0, Date.now() - startedAt)
+          : undefined;
+        toolStartedAt.delete(event.toolCall.id);
 
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,
           args: preparedArgs.eventArgs,
           toolCallId: event.toolCall.id,
+          durationMs,
           result: { error: event.error }
         };
       }

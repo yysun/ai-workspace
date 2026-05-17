@@ -45,7 +45,7 @@ export type RuntimeEvent =
   | { type: "message.delta"; text: string }
   | { type: "message.done"; message: { role: "assistant"; content: string } }
   | { type: "tool.call"; name: string; args: unknown; toolCallId?: string }
-  | { type: "tool.result"; name: string; args?: unknown; result: unknown; toolCallId?: string }
+  | { type: "tool.result"; name: string; args?: unknown; result: unknown; toolCallId?: string; durationMs?: number }
   | { type: "warning"; warning: string; code: "assistant_text_rejected_without_evidence" }
   | { type: "error"; error: string };
 
