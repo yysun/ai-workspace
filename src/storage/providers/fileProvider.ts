@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { AiwError, type ContentSearchInput, type ContentSearchResult, type CreateContentInput, type CreateContentResult, type DeleteContentInput, type DeleteContentResult, type ListContentInput, type ListContentResult, type ReadContentInput, type ReadContentResult, type ResolveObjectInput, type ResolvedObject, type WorkspaceContext, type WorkspaceProvider, type WriteContentInput, type WriteContentResult } from "../types.js";
+import { AiwError, type ContentEncoding, type ContentSearchInput, type ContentSearchResult, type CreateContentInput, type CreateContentResult, type DeleteContentInput, type DeleteContentResult, type ListContentInput, type ListContentResult, type ReadContentInput, type ReadContentResult, type ResolveObjectInput, type ResolvedObject, type WorkspaceContext, type WorkspaceProvider, type WriteContentInput, type WriteContentResult } from "../types.js";
+import { isSearchableTextContent, resolveContentDescriptor } from "../utils/content.js";
 import { canonicalObjectPath, defaultLayerPaths, inferMetadataFromPath, joinWorkspacePath, normalizeName, normalizeWorkspacePath } from "../utils/path.js";
 
 interface SidecarMetadata {
   contentType?: string;
+  contentEncoding?: ContentEncoding;
   metadata?: Record<string, unknown>;
   updatedAt?: string;
 }
@@ -43,13 +45,21 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       if (input.objectType && inferred.objectType !== input.objectType) continue;
       if (input.objectId && inferred.objectId !== input.objectId) continue;
       if (input.layer && inferred.layer !== input.layer) continue;
-      const abs = await this.resolveExistingWorkspacePath(filePath);
-      const content = await fs.readFile(abs, "utf8").catch(() => "");
+      const sidecar = await this.readSidecar(filePath);
+      const descriptor = resolveContentDescriptor({
+        workspacePath: filePath,
+        contentType: sidecar.contentType,
+        contentEncoding: sidecar.contentEncoding
+      });
       const lowerPath = filePath.toLowerCase();
-      const lowerContent = content.toLowerCase();
-      const foundAt = lowerContent.indexOf(query);
+      let content = "";
+      let foundAt = -1;
+      if (isSearchableTextContent(descriptor.contentEncoding, descriptor.contentType)) {
+        const abs = await this.resolveExistingWorkspacePath(filePath);
+        content = await fs.readFile(abs, "utf8").catch(() => "");
+        foundAt = content.toLowerCase().indexOf(query);
+      }
       if (lowerPath.includes(query) || foundAt >= 0) {
-        const sidecar = await this.readSidecar(filePath);
         matches.push({
           path: filePath,
           title: typeof sidecar.metadata?.title === "string" ? sidecar.metadata.title : null,
@@ -95,15 +105,21 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
   async readContent(input: ReadContentInput): Promise<ReadContentResult> {
     const p = normalizeWorkspacePath(input.path);
     const abs = await this.resolveExistingWorkspacePath(p);
-    const content = await fs.readFile(abs, "utf8").catch((err: NodeJS.ErrnoException) => {
+    const rawContent = await fs.readFile(abs).catch((err: NodeJS.ErrnoException) => {
       if (err.code === "ENOENT") throw new AiwError("NOT_FOUND", "Content path not found", { path: input.path });
       throw err;
     });
     const sidecar = await this.readSidecar(p);
+    const descriptor = resolveContentDescriptor({
+      workspacePath: p,
+      contentType: sidecar.contentType,
+      contentEncoding: sidecar.contentEncoding
+    });
     return {
       path: p,
-      content,
-      contentType: sidecar.contentType ?? "text/markdown",
+      content: descriptor.contentEncoding === "base64" ? rawContent.toString("base64") : rawContent.toString("utf8"),
+      contentType: descriptor.contentType,
+      contentEncoding: descriptor.contentEncoding,
       metadata: { ...inferMetadataFromPath(p), ...(sidecar.metadata ?? {}) },
       updatedAt: sidecar.updatedAt ?? null
     };
@@ -115,10 +131,16 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await this.assertRealPathInsideWorkspace(await resolveNearestExistingParentRealPath(abs), p);
     const existed = await exists(abs);
-    await fs.writeFile(abs, input.content, "utf8");
+    const descriptor = resolveContentDescriptor({
+      workspacePath: p,
+      contentType: input.contentType,
+      contentEncoding: input.contentEncoding
+    });
+    await fs.writeFile(abs, encodeContent(input.content, descriptor.contentEncoding));
     const updatedAt = new Date().toISOString();
     await this.writeSidecar(p, {
-      contentType: input.contentType ?? "text/markdown",
+      contentType: descriptor.contentType,
+      contentEncoding: descriptor.contentEncoding,
       metadata: { ...inferMetadataFromPath(p), ...(input.metadata ?? {}) },
       updatedAt
     });
@@ -293,6 +315,19 @@ function makeSnippet(content: string, foundAt: number): string {
   const start = Math.max(0, foundAt - 80);
   const end = Math.min(content.length, foundAt + 160);
   return content.slice(start, end).replace(/\s+/g, " ").trim();
+}
+
+function encodeContent(content: string, contentEncoding: ContentEncoding): Buffer {
+  return contentEncoding === "base64" ? decodeBase64(content) : Buffer.from(content, "utf8");
+}
+
+function decodeBase64(content: string): Buffer {
+  const normalized = content.replace(/\s+/g, "");
+  if (normalized.length === 0) return Buffer.alloc(0);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized)) {
+    throw new AiwError("INVALID_INPUT", "Binary content must be valid base64", { contentEncoding: "base64" });
+  }
+  return Buffer.from(normalized, "base64");
 }
 
 async function exists(abs: string): Promise<boolean> {

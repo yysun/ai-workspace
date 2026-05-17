@@ -1,6 +1,7 @@
 export type StorageType = "file" | "mssql";
 
 export type ContentType = "text/markdown" | "application/json" | "text/plain" | string;
+export type ContentEncoding = "utf8" | "base64";
 
 export type AiwMetadata = Record<string, unknown> & {
   objectType?: string;
@@ -58,6 +59,7 @@ export interface ReadContentResult {
   path: string;
   content: string;
   contentType: ContentType;
+  contentEncoding: ContentEncoding;
   metadata: AiwMetadata;
   updatedAt?: string | null;
 }
@@ -66,6 +68,7 @@ export interface WriteContentInput {
   path: string;
   content: string;
   contentType?: ContentType;
+  contentEncoding?: ContentEncoding;
   metadata?: AiwMetadata;
 }
 
@@ -75,7 +78,7 @@ export interface WriteContentResult {
   updatedAt: string;
 }
 
-export interface CreateContentInput extends WriteContentInput {}
+export interface CreateContentInput extends WriteContentInput { }
 
 export interface CreateContentResult {
   path: string;

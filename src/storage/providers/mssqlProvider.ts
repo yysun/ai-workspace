@@ -1,6 +1,9 @@
 import sql from "mssql";
-import { AiwError, type ContentSearchInput, type ContentSearchResult, type CreateContentInput, type CreateContentResult, type DeleteContentInput, type DeleteContentResult, type ListContentInput, type ListContentResult, type ReadContentInput, type ReadContentResult, type ResolveObjectInput, type ResolvedObject, type WorkspaceContext, type WorkspaceProvider, type WriteContentInput, type WriteContentResult } from "../types.js";
+import { AiwError, type ContentEncoding, type ContentSearchInput, type ContentSearchResult, type CreateContentInput, type CreateContentResult, type DeleteContentInput, type DeleteContentResult, type ListContentInput, type ListContentResult, type ReadContentInput, type ReadContentResult, type ResolveObjectInput, type ResolvedObject, type WorkspaceContext, type WorkspaceProvider, type WriteContentInput, type WriteContentResult } from "../types.js";
+import { resolveContentDescriptor } from "../utils/content.js";
 import { canonicalObjectPath, defaultLayerPaths, inferMetadataFromPath, normalizeName, normalizeWorkspacePath } from "../utils/path.js";
+
+const CONTENT_ENCODING_METADATA_KEY = "_contentEncoding";
 
 export class MssqlWorkspaceProvider implements WorkspaceProvider {
   private poolPromise?: Promise<sql.ConnectionPool>;
@@ -37,7 +40,7 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
       "workspace_id = @workspace_id",
       "user_id = @user_id",
       "deleted_at IS NULL",
-      "(path LIKE @query ESCAPE '\\' OR title LIKE @query ESCAPE '\\' OR content LIKE @query ESCAPE '\\')"
+      "(path LIKE @query ESCAPE '\\' OR title LIKE @query ESCAPE '\\' OR (ISNULL(JSON_VALUE(metadata_json, '$._contentEncoding'), '') <> 'base64' AND (content_type IS NULL OR content_type LIKE 'text/%' OR content_type IN ('application/json', 'application/ld+json', 'application/xml', 'application/yaml', 'image/svg+xml', 'text/xml', 'text/yaml')) AND content LIKE @query ESCAPE '\\'))"
     ];
     if (input.pathPrefix) where.push("path LIKE @path_prefix ESCAPE '\\'");
     if (input.objectType) where.push("object_type = @object_type");
@@ -53,7 +56,9 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
         layer,
         updated_at,
         CASE
-          WHEN CHARINDEX(REPLACE(REPLACE(@query, '%', ''), '\\', ''), content) > 0
+          WHEN ISNULL(JSON_VALUE(metadata_json, '$._contentEncoding'), '') <> 'base64'
+            AND (content_type IS NULL OR content_type LIKE 'text/%' OR content_type IN ('application/json', 'application/ld+json', 'application/xml', 'application/yaml', 'image/svg+xml', 'text/xml', 'text/yaml'))
+            AND CHARINDEX(REPLACE(REPLACE(@query, '%', ''), '\\', ''), content) > 0
           THEN SUBSTRING(content, CASE WHEN CHARINDEX(REPLACE(REPLACE(@query, '%', ''), '\\', ''), content) - 80 > 0 THEN CHARINDEX(REPLACE(REPLACE(@query, '%', ''), '\\', ''), content) - 80 ELSE 1 END, 240)
           ELSE NULL
         END AS snippet
@@ -115,11 +120,17 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
     `);
     const row = result.recordset[0];
     if (!row) throw new AiwError("NOT_FOUND", "Content path not found", { path: p });
-    const metadata = parseJson(row.metadata_json);
+    const { metadata, contentEncoding } = parseStoredMetadata(row.metadata_json);
+    const descriptor = resolveContentDescriptor({
+      workspacePath: row.path,
+      contentType: row.content_type ?? undefined,
+      contentEncoding
+    });
     return {
       path: row.path,
       content: row.content,
-      contentType: row.content_type ?? "text/markdown",
+      contentType: descriptor.contentType,
+      contentEncoding: descriptor.contentEncoding,
       metadata: {
         objectType: row.object_type ?? undefined,
         objectId: row.object_id ?? undefined,
@@ -135,6 +146,11 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
     const p = normalizeWorkspacePath(input.path);
     const inferred = inferMetadataFromPath(p);
     const metadata = { ...inferred, ...(input.metadata ?? {}) };
+    const descriptor = resolveContentDescriptor({
+      workspacePath: p,
+      contentType: input.contentType,
+      contentEncoding: input.contentEncoding
+    });
     const now = new Date().toISOString();
     const pool = await this.pool();
     const transaction = new sql.Transaction(pool);
@@ -172,7 +188,7 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
         `);
 
         const update = new sql.Request(transaction);
-        this.bindDocumentInputs(update, p, input.content, input.contentType ?? "text/markdown", metadata);
+        this.bindDocumentInputs(update, p, input.content, descriptor.contentType, descriptor.contentEncoding, metadata);
         update.input("id", sql.UniqueIdentifier, existing.id);
         await update.query(`
           UPDATE aiw_documents
@@ -190,7 +206,7 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
         const insert = new sql.Request(transaction);
         insert.input("workspace_id", sql.NVarChar(128), this.context.workspaceId);
         insert.input("user_id", sql.NVarChar(128), this.context.userId);
-        this.bindDocumentInputs(insert, p, input.content, input.contentType ?? "text/markdown", metadata);
+        this.bindDocumentInputs(insert, p, input.content, descriptor.contentType, descriptor.contentEncoding, metadata);
         await insert.query(`
           INSERT INTO aiw_documents (workspace_id, user_id, path, content, content_type, metadata_json, object_type, object_id, layer, title)
           VALUES (@workspace_id, @user_id, @path, @content, @content_type, @metadata_json, @object_type, @object_id, @layer, @title)
@@ -303,11 +319,11 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
     return this.poolPromise;
   }
 
-  private bindDocumentInputs(request: sql.Request, p: string, content: string, contentType: string, metadata: Record<string, unknown>): void {
+  private bindDocumentInputs(request: sql.Request, p: string, content: string, contentType: string, contentEncoding: ContentEncoding, metadata: Record<string, unknown>): void {
     request.input("path", sql.NVarChar(1000), p);
     request.input("content", sql.NVarChar(sql.MAX), content);
     request.input("content_type", sql.NVarChar(100), contentType);
-    request.input("metadata_json", sql.NVarChar(sql.MAX), JSON.stringify(metadata ?? {}));
+    request.input("metadata_json", sql.NVarChar(sql.MAX), JSON.stringify(serializeStoredMetadata(metadata, contentEncoding)));
     request.input("object_type", sql.NVarChar(100), typeof metadata.objectType === "string" ? metadata.objectType : null);
     request.input("object_id", sql.NVarChar(200), typeof metadata.objectId === "string" ? metadata.objectId : null);
     request.input("layer", sql.NVarChar(100), typeof metadata.layer === "string" ? metadata.layer : null);
@@ -318,6 +334,20 @@ export class MssqlWorkspaceProvider implements WorkspaceProvider {
 function parseJson(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function parseStoredMetadata(value: string | null | undefined): { metadata: Record<string, unknown>; contentEncoding?: ContentEncoding } {
+  const metadata = parseJson(value);
+  const contentEncoding = typeof metadata[CONTENT_ENCODING_METADATA_KEY] === "string"
+    ? metadata[CONTENT_ENCODING_METADATA_KEY] as ContentEncoding
+    : undefined;
+  delete metadata[CONTENT_ENCODING_METADATA_KEY];
+  return { metadata, contentEncoding };
+}
+
+function serializeStoredMetadata(metadata: Record<string, unknown>, contentEncoding: ContentEncoding): Record<string, unknown> {
+  if (contentEncoding === "utf8") return { ...metadata };
+  return { ...metadata, [CONTENT_ENCODING_METADATA_KEY]: contentEncoding };
 }
 
 function escapeLike(value: string): string {

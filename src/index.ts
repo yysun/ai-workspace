@@ -7,12 +7,15 @@
 import "dotenv/config";
 import { createServer } from "./server.js";
 import { loadEnv } from "./config/env.js";
+import { formatStorageTypeForLog, resolveStorageType } from "./storage/utils/config.js";
 
 async function main(): Promise<void> {
   const env = loadEnv(process.env);
   const app = createServer(env);
+  const storage = formatStorageTypeForLog(resolveStorageType(process.env.AIW_STORAGE));
   const server = app.listen(env.port, () => {
     console.log(`[server] listening on port ${env.port}`);
+    console.log(`[server] storage: ${storage}`);
     console.log(`[workspace] ${env.workspaceRoot}`);
   });
 

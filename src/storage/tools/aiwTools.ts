@@ -45,23 +45,23 @@ export function createAiwTools(provider: WorkspaceProvider): AiwToolDefinition[]
     },
     {
       name: "read_content",
-      description: "Read full content at an exact AIW path.",
+      description: "Read full content at an exact AIW path. Binary payloads are returned as base64 with their MIME type and contentEncoding.",
       evidenceKind: "read",
       parameters: jsonSchema({ path: "string" }),
       execute: wrap(readContentSchema, (input) => provider.readContent(input))
     },
     {
       name: "write_content",
-      description: "Create or replace content at an exact AIW path. Use for durable canonical layer updates.",
+      description: "Create or replace content at an exact AIW path. When contentEncoding is omitted, common binary and text file types are inferred from the path extension or MIME type.",
       evidenceKind: "write",
-      parameters: jsonSchema({ path: "string", content: "string", contentType: "string?", metadata: "object?" }),
+      parameters: jsonSchema({ path: "string", content: "string", contentType: "string?", contentEncoding: "string?", metadata: "object?" }),
       execute: wrap(writeContentSchema, (input) => provider.writeContent(input))
     },
     {
       name: "create_content",
-      description: "Create new content only if the path does not already exist.",
+      description: "Create new content only if the path does not already exist. When contentEncoding is omitted, common binary and text file types are inferred from the path extension or MIME type.",
       evidenceKind: "write",
-      parameters: jsonSchema({ path: "string", content: "string", contentType: "string?", metadata: "object?" }),
+      parameters: jsonSchema({ path: "string", content: "string", contentType: "string?", contentEncoding: "string?", metadata: "object?" }),
       execute: wrap(createContentSchema, (input) => provider.createContent(input))
     },
     {

@@ -28,6 +28,7 @@ export const writeContentSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
   contentType: z.string().optional(),
+  contentEncoding: z.enum(["utf8", "base64"]).optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 

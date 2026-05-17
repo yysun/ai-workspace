@@ -13,7 +13,7 @@ export interface CreateContextOptions {
 
 export function createWorkspaceContext(options: CreateContextOptions = {}): WorkspaceContext {
   const envSource = options.envSource ?? process.env;
-  const storage = options.storage ?? parseStorage(envSource.AIW_STORAGE ?? "file");
+  const storage = options.storage ?? resolveStorageType(envSource.AIW_STORAGE);
   const workspaceId = options.workspaceId ?? envSource.AIW_WORKSPACE_ID ?? "local";
   const userId = trimRequiredUserId(options.userId ?? envSource.AIW_USER_ID);
 
@@ -34,6 +34,16 @@ export function createWorkspaceContext(options: CreateContextOptions = {}): Work
   }
 
   return context;
+}
+
+export function resolveStorageType(value: string | undefined): StorageType {
+  const normalized = value ?? "file";
+
+  return parseStorage(normalized);
+}
+
+export function formatStorageTypeForLog(storage: StorageType): "file" | "sql server" {
+  return storage === "mssql" ? "sql server" : "file";
 }
 
 function parseStorage(value: string): StorageType {

@@ -4,13 +4,17 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { FileWorkspaceProvider } from "../../src/storage/providers/fileProvider.js";
-import { createAiwTools } from "../../src/storage/tools/aiwTools.js";
-import { createWorkspaceContext } from "../../src/storage/utils/config.js";
+import { createAiwTools, type AiwToolResult } from "../../src/storage/tools/aiwTools.js";
+import {
+  createWorkspaceContext,
+  formatStorageTypeForLog,
+  resolveStorageType
+} from "../../src/storage/utils/config.js";
 
 async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -19,6 +23,11 @@ async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+function expectOk<T>(result: AiwToolResult<unknown> | undefined): T {
+  assert.equal(result?.ok, true);
+  return result?.data as T;
 }
 
 test("AIW storage context requires a host-provided userId", () => {
@@ -56,6 +65,12 @@ test("AIW storage context scopes an explicit fileRoot by userId", () => {
   assert.equal(context.fileRoot, "/tmp/workspace/users/user-1");
 });
 
+test("AIW storage log labels match configured storage type", () => {
+  assert.equal(formatStorageTypeForLog(resolveStorageType(undefined)), "file");
+  assert.equal(formatStorageTypeForLog(resolveStorageType("file")), "file");
+  assert.equal(formatStorageTypeForLog(resolveStorageType("mssql")), "sql server");
+});
+
 test("AIW file tools write, read, list, search, and delete content", async () => {
   await withTempDir("ai-workspace-storage-", async (root) => {
     const provider = new FileWorkspaceProvider({
@@ -71,28 +86,28 @@ test("AIW file tools write, read, list, search, and delete content", async () =>
       content: "Jazz Gill prefers quarterly planning notes.",
       metadata: { title: "Jazz account memory" }
     });
-    assert.equal(write?.ok, true);
-    assert.equal(write?.data?.created, true);
+    const writeData = expectOk<{ created: boolean }>(write);
+    assert.equal(writeData.created, true);
 
     const read = await tools.read_content?.execute({ path: "data/accounts/a123/memory.md" });
-    assert.equal(read?.ok, true);
-    assert.equal(read?.data?.content, "Jazz Gill prefers quarterly planning notes.");
-    assert.equal(read?.data?.metadata.objectType, "account");
-    assert.equal(read?.data?.metadata.objectId, "a123");
-    assert.equal(read?.data?.metadata.layer, "memory");
-    assert.equal(read?.data?.metadata.title, "Jazz account memory");
+    const readData = expectOk<{ content: string; metadata: { objectType?: string; objectId?: string; layer?: string; title?: string } }>(read);
+    assert.equal(readData.content, "Jazz Gill prefers quarterly planning notes.");
+    assert.equal(readData.metadata.objectType, "account");
+    assert.equal(readData.metadata.objectId, "a123");
+    assert.equal(readData.metadata.layer, "memory");
+    assert.equal(readData.metadata.title, "Jazz account memory");
 
     const list = await tools.list_content?.execute({ path: "data/accounts/a123" });
-    assert.equal(list?.ok, true);
-    assert.deepEqual(list?.data?.map((entry) => entry.path), ["data/accounts/a123/memory.md"]);
+    const listData = expectOk<Array<{ path: string }>>(list);
+    assert.deepEqual(listData.map((entry) => entry.path), ["data/accounts/a123/memory.md"]);
 
     const search = await tools.search_content?.execute({ query: "quarterly", pathPrefix: "data/" });
-    assert.equal(search?.ok, true);
-    assert.equal(search?.data?.[0]?.path, "data/accounts/a123/memory.md");
+    const searchData = expectOk<Array<{ path: string }>>(search);
+    assert.equal(searchData[0]?.path, "data/accounts/a123/memory.md");
 
     const deleted = await tools.delete_content?.execute({ path: "data/accounts/a123/memory.md" });
-    assert.equal(deleted?.ok, true);
-    assert.equal(deleted?.data?.deleted, true);
+    const deletedData = expectOk<{ deleted: boolean }>(deleted);
+    assert.equal(deletedData.deleted, true);
 
     const missing = await tools.read_content?.execute({ path: "data/accounts/a123/memory.md" });
     assert.equal(missing?.ok, false);
@@ -119,6 +134,108 @@ test("AIW file provider rejects writes through symlinked directories outside the
         /Path escapes workspace/
       );
     });
+  });
+});
+
+test("AIW file tools round-trip binary content as base64 with MIME type", async () => {
+  await withTempDir("ai-workspace-storage-", async (root) => {
+    const provider = new FileWorkspaceProvider({
+      storage: "file",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      fileRoot: root
+    });
+    const tools = Object.fromEntries(createAiwTools(provider).map((tool) => [tool.name, tool]));
+    const pdfBytes = Buffer.from("%PDF-1.7\nBinary payload\u0000", "utf8");
+    const pdfBase64 = pdfBytes.toString("base64");
+
+    const write = await tools.write_content?.execute({
+      path: "outputs/presentations/2026/05/17/daily-triage-2026-05-17.pdf",
+      content: pdfBase64,
+      metadata: { title: "Daily triage PDF" }
+    });
+
+    assert.equal(write?.ok, true);
+
+    const read = await tools.read_content?.execute({
+      path: "outputs/presentations/2026/05/17/daily-triage-2026-05-17.pdf"
+    });
+
+    const readData = expectOk<{
+      content: string;
+      contentType: string;
+      contentEncoding: string;
+      metadata: { objectType?: string; layer?: string; title?: string };
+    }>(read);
+    assert.equal(readData.content, pdfBase64);
+    assert.equal(readData.contentType, "application/pdf");
+    assert.equal(readData.contentEncoding, "base64");
+    assert.equal(readData.metadata.objectType, "output");
+    assert.equal(readData.metadata.layer, "output");
+    assert.equal(readData.metadata.title, "Daily triage PDF");
+
+    const stored = await readFile(path.join(root, "outputs/presentations/2026/05/17/daily-triage-2026-05-17.pdf"));
+    assert.deepEqual(stored, pdfBytes);
+
+    const search = await tools.search_content?.execute({ query: "JVBER", pathPrefix: "outputs/" });
+    const searchData = expectOk<Array<{ path: string }>>(search);
+    assert.deepEqual(searchData, []);
+  });
+});
+
+test("AIW file tools auto-detect common binary and text file types", async () => {
+  await withTempDir("ai-workspace-storage-", async (root) => {
+    const provider = new FileWorkspaceProvider({
+      storage: "file",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      fileRoot: root
+    });
+    const tools = Object.fromEntries(createAiwTools(provider).map((tool) => [tool.name, tool]));
+
+    const pptxBase64 = Buffer.from("PK\u0003\u0004pptx-bytes", "utf8").toString("base64");
+    const writeDeck = await tools.write_content?.execute({
+      path: "outputs/presentations/2026/05/17/account-review.pptx",
+      content: pptxBase64
+    });
+    assert.equal(writeDeck?.ok, true);
+
+    const readDeck = expectOk<{
+      contentType: string;
+      contentEncoding: string;
+      content: string;
+    }>(await tools.read_content?.execute({ path: "outputs/presentations/2026/05/17/account-review.pptx" }));
+    assert.equal(readDeck.contentEncoding, "base64");
+    assert.equal(readDeck.contentType, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+    assert.equal(readDeck.content, pptxBase64);
+
+    const writeJson = await tools.write_content?.execute({
+      path: "outputs/scratch/report.json",
+      content: '{"ok":true}'
+    });
+    assert.equal(writeJson?.ok, true);
+
+    const readJson = expectOk<{
+      contentType: string;
+      contentEncoding: string;
+      content: string;
+    }>(await tools.read_content?.execute({ path: "outputs/scratch/report.json" }));
+    assert.equal(readJson.contentEncoding, "utf8");
+    assert.equal(readJson.contentType, "application/json");
+    assert.equal(readJson.content, '{"ok":true}');
+
+    const writeHtml = await tools.write_content?.execute({
+      path: "outputs/scratch/preview.html",
+      content: "<html><body>preview</body></html>"
+    });
+    assert.equal(writeHtml?.ok, true);
+
+    const readHtml = expectOk<{
+      contentType: string;
+      contentEncoding: string;
+    }>(await tools.read_content?.execute({ path: "outputs/scratch/preview.html" }));
+    assert.equal(readHtml.contentEncoding, "utf8");
+    assert.equal(readHtml.contentType, "text/html");
   });
 });
 
