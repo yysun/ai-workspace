@@ -28,18 +28,37 @@ async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): 
 test("createRequestTools always includes workspace_read_file and conditionally includes api_request", () => {
   assert.deepEqual(
     createRequestTools("/workspace", {}, "3").map((tool) => tool.name),
-    ["workspace_read_file"]
+    [
+      "workspace_read_file",
+      "resolve_object",
+      "search_content",
+      "list_content",
+      "read_content",
+      "write_content",
+      "create_content",
+      "delete_content"
+    ]
   );
 
   assert.deepEqual(
     createRequestTools("/workspace", {
       API_BASE_URL: "https://api.example.test/root"
     }, "3").map((tool) => tool.name),
-    ["workspace_read_file", "api_request"]
+    [
+      "workspace_read_file",
+      "api_request",
+      "resolve_object",
+      "search_content",
+      "list_content",
+      "read_content",
+      "write_content",
+      "create_content",
+      "delete_content"
+    ]
   );
 });
 
-test("createRequestTools includes AIW storage tools when AIW storage is configured", () => {
+test("createRequestTools includes AIW storage tools by default and honors explicit storage config", () => {
   assert.deepEqual(
     createRequestTools("/workspace", {
       AIW_STORAGE: "file"

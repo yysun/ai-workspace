@@ -38,7 +38,6 @@ type RuntimeState = {
 const REJECTED_TEXT_RETRY_LIMIT = 2;
 const DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS = 24;
 const DEFAULT_MAX_WALL_TIME_MS = 15 * 60 * 1000;
-const AIW_TOOL_CONFIG_KEYS = ["AIW_STORAGE", "AIW_MSSQL_CONNECTION_STRING"] as const;
 
 function createRejectedTextTerminalError(reason: string): string {
   if (reason === "rejected_text_response") {
@@ -273,22 +272,16 @@ export function createRequestTools(
     tools.push(apiRequestTool);
   }
 
-  if (hasAiwToolConfig(envSource)) {
-    const provider = createWorkspaceProvider({
-      envSource: storageEnvSource,
-      userId: scopedUserId
-    });
-    tools.push(...createAiwTools(provider));
-    if (provider.close) {
-      registerCloser(() => provider.close?.() ?? Promise.resolve());
-    }
+  const provider = createWorkspaceProvider({
+    envSource: storageEnvSource,
+    userId: scopedUserId
+  });
+  tools.push(...createAiwTools(provider));
+  if (provider.close) {
+    registerCloser(() => provider.close?.() ?? Promise.resolve());
   }
 
   return tools;
-}
-
-function hasAiwToolConfig(envSource: NodeJS.ProcessEnv): boolean {
-  return AIW_TOOL_CONFIG_KEYS.some((key) => !!envSource[key]?.trim());
 }
 
 function requireUserId(userId: string): string {
