@@ -112,7 +112,12 @@ test("AIW file tools write, read, list, search, and delete content", async () =>
     assert.equal(readData.metadata.objectType, "account");
     assert.equal(readData.metadata.objectId, "a123");
     assert.equal(readData.metadata.layer, "memory");
-    assert.equal(readData.metadata.title, "Jazz account memory");
+    assert.equal(readData.metadata.title, undefined);
+
+    await assert.rejects(
+      async () => await readFile(path.join(root, "data/accounts/a123/memory.md.metadata.json"), "utf8"),
+      /ENOENT/
+    );
 
     const list = await tools.list_content?.execute({ path: "data/accounts/a123" });
     const listData = expectOk<Array<{ path: string }>>(list);
@@ -294,7 +299,7 @@ test("AIW file tools round-trip binary content as base64 with MIME type", async 
     assert.equal(readData.contentEncoding, "base64");
     assert.equal(readData.metadata.objectType, "output");
     assert.equal(readData.metadata.layer, "output");
-    assert.equal(readData.metadata.title, "Daily triage PDF");
+    assert.equal(readData.metadata.title, undefined);
 
     const stored = await readFile(path.join(root, "outputs/presentations/2026/05/17/daily-triage-2026-05-17.pdf"));
     assert.deepEqual(stored, pdfBytes);

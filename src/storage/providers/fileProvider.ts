@@ -46,6 +46,7 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       if (input.objectId && inferred.objectId !== input.objectId) continue;
       if (input.layer && inferred.layer !== input.layer) continue;
       const sidecar = await this.readSidecar(filePath);
+      const abs = await this.resolveExistingWorkspacePath(filePath);
       const descriptor = resolveContentDescriptor({
         workspacePath: filePath,
         contentType: sidecar.contentType,
@@ -55,10 +56,10 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       let content = "";
       let foundAt = -1;
       if (isSearchableTextContent(descriptor.contentEncoding, descriptor.contentType)) {
-        const abs = await this.resolveExistingWorkspacePath(filePath);
         content = await fs.readFile(abs, "utf8").catch(() => "");
         foundAt = content.toLowerCase().indexOf(query);
       }
+      const updatedAt = sidecar.updatedAt ?? await this.readUpdatedAt(abs);
       if (lowerPath.includes(query) || foundAt >= 0) {
         matches.push({
           path: filePath,
@@ -67,7 +68,7 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
           objectType: inferred.objectType ?? null,
           objectId: inferred.objectId ?? null,
           layer: inferred.layer ?? null,
-          updatedAt: sidecar.updatedAt ?? null,
+          updatedAt,
           score: lowerPath.includes(query) ? 1 : 0.7
         });
       }
@@ -91,12 +92,13 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       const childPath = joinWorkspacePath(prefix, entry.name) + (entry.isDirectory() ? "/" : "");
       const inferred = inferMetadataFromPath(childPath);
       const sidecar = entry.isDirectory() ? {} : await this.readSidecar(childPath);
+      const updatedAt = entry.isDirectory() ? null : sidecar.updatedAt ?? await this.readUpdatedAt(path.join(abs, entry.name));
       results.push({
         path: childPath,
         type: entry.isDirectory() ? "prefix" : "content",
         title: typeof sidecar.metadata?.title === "string" ? sidecar.metadata.title : null,
         layer: inferred.layer ?? null,
-        updatedAt: sidecar.updatedAt ?? null
+        updatedAt
       });
     }
     return results;
@@ -121,7 +123,7 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       contentType: descriptor.contentType,
       contentEncoding: descriptor.contentEncoding,
       metadata: { ...inferMetadataFromPath(p), ...(sidecar.metadata ?? {}) },
-      updatedAt: sidecar.updatedAt ?? null
+      updatedAt: sidecar.updatedAt ?? await this.readUpdatedAt(abs)
     };
   }
 
@@ -137,13 +139,8 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
       contentEncoding: input.contentEncoding
     });
     await fs.writeFile(abs, encodeContent(input.content, descriptor.contentEncoding));
-    const updatedAt = new Date().toISOString();
-    await this.writeSidecar(p, {
-      contentType: descriptor.contentType,
-      contentEncoding: descriptor.contentEncoding,
-      metadata: { ...inferMetadataFromPath(p), ...(input.metadata ?? {}) },
-      updatedAt
-    });
+    const updatedAt = await this.readUpdatedAt(abs) ?? new Date().toISOString();
+    await fs.rm(await this.resolveWritableWorkspacePath(this.sidecarPath(p)), { force: true });
     return { path: p, created: !existed, updatedAt };
   }
 
@@ -266,11 +263,9 @@ export class FileWorkspaceProvider implements WorkspaceProvider {
     try { return JSON.parse(txt) as SidecarMetadata; } catch { return {}; }
   }
 
-  private async writeSidecar(workspacePath: string, metadata: SidecarMetadata): Promise<void> {
-    const sidecar = await this.resolveWritableWorkspacePath(this.sidecarPath(workspacePath));
-    await fs.mkdir(path.dirname(sidecar), { recursive: true });
-    await this.assertRealPathInsideWorkspace(await resolveNearestExistingParentRealPath(sidecar), workspacePath);
-    await fs.writeFile(sidecar, JSON.stringify(metadata, null, 2), "utf8");
+  private async readUpdatedAt(abs: string): Promise<string | null> {
+    const stat = await fs.stat(abs).catch(() => null);
+    return stat?.mtime ? stat.mtime.toISOString() : null;
   }
 
   private async walk(prefix: string): Promise<string[]> {

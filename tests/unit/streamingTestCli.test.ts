@@ -555,6 +555,163 @@ test("formatToolResultEventLine includes saved output paths for api_request", ()
   );
 });
 
+test("formatToolResultEventLine summarizes write_content saves with the target path", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "write_content",
+      JSON.stringify({
+        ok: true,
+        data: {
+          path: "users/3/data/contacts/99027713/current/summary.md",
+          created: false,
+          updatedAt: "2026-05-17T10:00:00.000Z"
+        }
+      }),
+      "default",
+      {
+        path: "users/3/data/contacts/99027713/current/summary.md",
+        content: "updated summary"
+      },
+      7
+    ),
+    [
+      "",
+      "  ✓ write_content 7ms · updated · users/3/data/contacts/99027713/current/summary.md",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes marp_cli renders concisely", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "marp_cli",
+      JSON.stringify({
+        ok: true,
+        format: "pptx",
+        outputFilePath: "output/account-review.pptx",
+        bytesWritten: 2048
+      }),
+      "default",
+      undefined,
+      8
+    ),
+    [
+      "",
+      "  ✓ marp_cli 8ms · pptx · 2.0 KB",
+      "    output: output/account-review.pptx",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes resolve_object matches concisely", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "resolve_object",
+      JSON.stringify({
+        ok: true,
+        data: [
+          {
+            objectType: "account",
+            objectId: "a123",
+            displayName: "Jazz Gill",
+            canonicalPath: "data/accounts/a123/"
+          }
+        ]
+      }),
+      "default",
+      undefined,
+      5
+    ),
+    [
+      "",
+      "  ✓ resolve_object 5ms · 1 match",
+      "    Jazz Gill · data/accounts/a123/",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes search_content matches concisely", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "search_content",
+      JSON.stringify({
+        ok: true,
+        data: [
+          {
+            path: "users/3/data/contacts/99027713/current/summary.md"
+          }
+        ]
+      }),
+      "default",
+      undefined,
+      6
+    ),
+    [
+      "",
+      "  ✓ search_content 6ms · 1 match",
+      "    users/3/data/contacts/99027713/current/summary.md",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes list_content entries concisely", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "list_content",
+      JSON.stringify({
+        ok: true,
+        data: [
+          {
+            path: "users/3/data/contacts/99027713/current/"
+          },
+          {
+            path: "users/3/data/contacts/99027713/history/"
+          }
+        ]
+      }),
+      "default",
+      undefined,
+      4
+    ),
+    [
+      "",
+      "  ✓ list_content 4ms · 2 entries",
+      "    users/3/data/contacts/99027713/current/",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes read_content without previewing file contents", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "read_content",
+      JSON.stringify({
+        ok: true,
+        data: {
+          path: "users/3/data/contacts/99027713/current/summary.md",
+          content: "line one\nline two\nline three\n",
+          contentType: "text/markdown",
+          contentEncoding: "utf8"
+        }
+      }),
+      "default",
+      undefined,
+      3
+    ),
+    [
+      "",
+      "  ✓ read_content 3ms · text/markdown · 3 lines",
+      "    path: users/3/data/contacts/99027713/current/summary.md",
+      ""
+    ].join("\n")
+  );
+});
+
 test("streamAssistantTurn writes tool results using returned payloads", async () => {
   const output = createWritableCapture();
   const errorOutput = createWritableCapture();

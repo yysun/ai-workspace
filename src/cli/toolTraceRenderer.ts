@@ -501,6 +501,169 @@ function summarizeApiRequestResult(result: unknown, forcedDurationMs?: number): 
   return summarizeGenericToolResult(result, "api_request", forcedDurationMs);
 }
 
+function readDataField(result: unknown): unknown {
+  const record = parseJsonRecord(result);
+  return record?.data;
+}
+
+function summarizeMarpCliResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, "marp_cli", forcedDurationMs);
+  }
+
+  const format = readFirstString(record, "format") ?? "rendered";
+  const bytesWritten = readFirstNumber(record, "bytesWritten", "bytes", "size");
+  const outputFilePath = readFirstString(record, "outputFilePath");
+
+  return {
+    name: "marp_cli",
+    ok: true,
+    durationMs,
+    summary: bytesWritten === null ? format : `${format} · ${formatFileSize(bytesWritten)}`,
+    preview: outputFilePath ? [`output: ${truncateOneLine(outputFilePath, MAX_PREVIEW_LINE_WIDTH - 8)}`] : undefined,
+    raw: result
+  };
+}
+
+function summarizeResolveObjectResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, "resolve_object", forcedDurationMs);
+  }
+
+  const data = readDataField(result);
+  const matches = Array.isArray(data) ? data.filter(isRecord) : [];
+  const first = matches[0];
+  const displayName = readFirstString(first ?? null, "displayName");
+  const canonicalPath = readFirstString(first ?? null, "canonicalPath");
+  const preview = displayName || canonicalPath
+    ? [truncateOneLine([displayName, canonicalPath].filter((value): value is string => !!value).join(" · "), MAX_PREVIEW_LINE_WIDTH)]
+    : undefined;
+
+  return {
+    name: "resolve_object",
+    ok: true,
+    durationMs,
+    summary: `${matches.length} match${matches.length === 1 ? "" : "es"}`,
+    preview,
+    raw: result
+  };
+}
+
+function summarizeSearchContentResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, "search_content", forcedDurationMs);
+  }
+
+  const data = readDataField(result);
+  const matches = Array.isArray(data) ? data.filter(isRecord) : [];
+  const firstPath = readFirstString(matches[0] ?? null, "path");
+
+  return {
+    name: "search_content",
+    ok: true,
+    durationMs,
+    summary: `${matches.length} match${matches.length === 1 ? "" : "es"}`,
+    preview: firstPath ? [truncateOneLine(firstPath, MAX_PREVIEW_LINE_WIDTH)] : undefined,
+    raw: result
+  };
+}
+
+function summarizeListContentResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, "list_content", forcedDurationMs);
+  }
+
+  const data = readDataField(result);
+  const entries = Array.isArray(data) ? data.filter(isRecord) : [];
+  const firstPath = readFirstString(entries[0] ?? null, "path");
+
+  return {
+    name: "list_content",
+    ok: true,
+    durationMs,
+    summary: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}`,
+    preview: firstPath ? [truncateOneLine(firstPath, MAX_PREVIEW_LINE_WIDTH)] : undefined,
+    raw: result
+  };
+}
+
+function summarizeReadContentResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, "read_content", forcedDurationMs);
+  }
+
+  const data = parseJsonRecord(readDataField(result));
+  const contentType = readFirstString(data, "contentType") ?? "content";
+  const contentEncoding = readFirstString(data, "contentEncoding") ?? "utf8";
+  const path = readFirstString(data, "path");
+  const content = readFirstString(data, "content");
+  const sizeSummary = contentEncoding === "base64"
+    ? "base64"
+    : content === null
+      ? null
+      : formatLineCount(countLines(content));
+  const summary = sizeSummary ? `${contentType} · ${sizeSummary}` : contentType;
+
+  return {
+    name: "read_content",
+    ok: true,
+    durationMs,
+    summary,
+    preview: path ? [`path: ${truncateOneLine(path, MAX_PREVIEW_LINE_WIDTH - 6)}`] : undefined,
+    raw: result
+  };
+}
+
+function summarizeAiwContentMutationResult(
+  toolName: "write_content" | "create_content" | "delete_content",
+  result: unknown,
+  forcedDurationMs?: number
+): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+
+  if (!ok) {
+    return summarizeGenericToolResult(result, toolName, forcedDurationMs);
+  }
+
+  const data = isRecord(record?.data) ? record.data : null;
+  const path = readFirstString(data, "path") ?? readFirstString(record, "path");
+  const summary = toolName === "delete_content"
+    ? "deleted"
+    : toolName === "create_content" || readFirstBoolean(data, "created") === true
+      ? "created"
+      : "updated";
+
+  return {
+    name: toolName,
+    ok: true,
+    durationMs,
+    summary: path ? `${summary} · ${truncateOneLine(path, MAX_PREVIEW_LINE_WIDTH)}` : summary,
+    raw: result
+  };
+}
+
 function summarizeGenericToolResult(result: unknown, toolName: string, forcedDurationMs?: number): ToolResultView {
   const record = parseJsonRecord(result);
   const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
@@ -660,6 +823,30 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
 
   if (toolName === "api_request") {
     return summarizeApiRequestResult(result, durationMs);
+  }
+
+  if (toolName === "marp_cli") {
+    return summarizeMarpCliResult(result, durationMs);
+  }
+
+  if (toolName === "resolve_object") {
+    return summarizeResolveObjectResult(result, durationMs);
+  }
+
+  if (toolName === "search_content") {
+    return summarizeSearchContentResult(result, durationMs);
+  }
+
+  if (toolName === "list_content") {
+    return summarizeListContentResult(result, durationMs);
+  }
+
+  if (toolName === "read_content") {
+    return summarizeReadContentResult(result, durationMs);
+  }
+
+  if (toolName === "write_content" || toolName === "create_content" || toolName === "delete_content") {
+    return summarizeAiwContentMutationResult(toolName, result, durationMs);
   }
 
   return summarizeGenericToolResult(result, toolName, durationMs);
