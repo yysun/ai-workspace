@@ -1164,15 +1164,11 @@ test("collectHumanInputAnswers returns null when the user exits the prompt UI", 
 
 test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
   const output = createWritableCapture();
-  const answerMessage = [
-    "- Answer for request call_123:",
-    "  - mode (Which mode?): safe (Safe)"
-  ].join("\n");
+  const answerMessage = "  - mode (Which mode?): safe (Safe)";
 
   writeQueuedHumanInputFollowUp(output.output, answerMessage);
 
   assert.equal(output.text(), [
-    "- Answer for request call_123:",
     "  - mode (Which mode?): safe (Safe)",
     ""
   ].join("\n"));
@@ -1321,13 +1317,11 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "  2. Not sure / search all",
       "  0. Exit UI",
       "Select a number or option id, or type a custom answer. Enter 0 to exit UI: 1",
-      "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))",
       ""
     ].join("\n"));
 
     assert.equal(formatHumanInputAnswerMessage(answers), [
-      "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))"
     ].join("\n"));
   } finally {
@@ -1426,7 +1420,6 @@ test("formatHumanInputAnswerMessage serializes selected ids and labels", () => {
       ]
     }
   ]), [
-    "- Answer for request call_123:",
     "  - mode (Which mode?): safe, full (Safe, Full)",
     "  - notes (Any notes?): Need SOC 2 docs",
     "  - empty (Leave blank?): skipped"

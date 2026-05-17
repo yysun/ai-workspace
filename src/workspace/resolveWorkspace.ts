@@ -27,10 +27,6 @@ export function resolveApiResponseDirectory(workspaceRoot: string, userId: strin
   return path.join(resolveUserWorkspaceRoot(workspaceRoot, userId), "data", "api-responses");
 }
 
-export function resolveApiCacheDirectory(workspaceRoot: string, userId: string): string {
-  return path.join(resolveUserWorkspaceRoot(workspaceRoot, userId), "data", "api-cache");
-}
-
 export function resolveToolWorkspaceRoot(options: {
   workspaceRoot?: string;
   userId: string;

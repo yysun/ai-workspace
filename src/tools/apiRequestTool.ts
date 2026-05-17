@@ -1,21 +1,18 @@
 /*
  * Feature: workspace-configured outbound API tool for llm-runtime requests.
  * Notes: constrains calls to a configured base URL and applies host-owned auth headers from workspace env.
- * Recent changes: supports opt-in GET response caching in user-scoped api-cache storage while keeping file-backed response persistence constrained to tool-owned api-responses directories.
+ * Recent changes: supports opt-in GET response caching in process memory while keeping file-backed response persistence constrained to tool-owned api-responses directories.
  */
 
-import type { Dirent } from "node:fs";
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveApiCacheDirectory, resolveApiResponseDirectory, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
+import { resolveApiResponseDirectory, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const API_TOOL_NAME = "api_request";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
 const DEFAULT_INLINE_BODY_BYTE_LIMIT = 32 * 1024;
-const DEFAULT_AUTO_RESPONSE_FILE_LIMIT = 20;
-const AUTOMATIC_RESPONSE_FILE_PREFIX = "api-response-";
 const SUPPORTED_API_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const REDACTED_RESPONSE_HEADER_NAMES = new Set([
   "authorization",
@@ -37,7 +34,6 @@ type ApiResponseStorage = {
   workspaceRoot?: string;
   userId: string;
   inlineBodyByteLimit: number;
-  autoResponseFileLimit: number;
   workspaceRootRealPathPromise?: Promise<string>;
 };
 
@@ -57,6 +53,8 @@ type ApiCacheEntry = {
   rawBody: string;
   response: ApiResponseSummary;
 };
+
+const apiResponseCache = new Map<string, ApiCacheEntry>();
 
 type QueryValue = string | number | boolean | null | Array<string | number | boolean | null>;
 
@@ -178,31 +176,40 @@ function trimOptionalPath(value: unknown): string | undefined {
 }
 
 function parseCacheTtlMs(value: unknown, method: string): number | undefined {
-  if (value === undefined) {
+  if (value === undefined || value === null || method !== "GET") {
     return undefined;
   }
 
-  if (method !== "GET") {
-    throw new Error("api_request cacheTtlMs is only supported for GET requests");
+  const normalizedValue = typeof value === "string" && value.trim() ? Number(value) : value;
+  if (typeof normalizedValue !== "number" || !Number.isFinite(normalizedValue)) {
+    return undefined;
   }
 
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error("api_request cacheTtlMs must be a positive number");
-  }
-
-  return Math.floor(value);
+  const ttlMs = Math.floor(normalizedValue);
+  return ttlMs > 0 ? ttlMs : undefined;
 }
 
 function parseBypassCache(value: unknown): boolean {
-  if (value === undefined) {
+  if (value === undefined || value === null) {
     return false;
   }
 
-  if (typeof value !== "boolean") {
-    throw new Error("api_request bypassCache must be a boolean");
+  if (typeof value === "boolean") {
+    return value;
   }
 
-  return value;
+  if (typeof value === "string") {
+    const normalizedValue = value.trim().toLowerCase();
+    if (normalizedValue === "true") {
+      return true;
+    }
+
+    if (normalizedValue === "false") {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 async function resolveExistingPathRealPath(candidatePath: string): Promise<string | null> {
@@ -306,26 +313,7 @@ async function resolveWorkspaceOutputPath(
   return candidatePath;
 }
 
-function inferResponseExtension(contentType: string | null): string {
-  if (contentType?.toLowerCase().includes("application/json")) {
-    return "json";
-  }
-
-  return "txt";
-}
-
-function createAutomaticResponsePath(workspaceRoot: string, userId: string, contentType: string | null): string {
-  return path.join(
-    resolveApiResponseDirectory(workspaceRoot, userId),
-    `${AUTOMATIC_RESPONSE_FILE_PREFIX}${randomUUID()}.${inferResponseExtension(contentType)}`
-  );
-}
-
-function createCacheEntryPath(workspaceRoot: string, userId: string, cacheKey: string): string {
-  return path.join(resolveApiCacheDirectory(workspaceRoot, userId), `${cacheKey}.json`);
-}
-
-function createCacheKey(method: string, url: URL, headers: Headers): string {
+function createCacheKey(userId: string, method: string, url: URL, headers: Headers): string {
   const normalizedHeaders = Array.from(headers.entries())
     .sort((left, right) => {
       if (left[0] !== right[0]) {
@@ -337,6 +325,7 @@ function createCacheKey(method: string, url: URL, headers: Headers): string {
 
   return createHash("sha256")
     .update(JSON.stringify({
+      userId,
       method,
       url: url.toString(),
       headers: normalizedHeaders
@@ -370,98 +359,22 @@ function isApiCacheEntry(value: unknown): value is ApiCacheEntry {
     && !Array.isArray(response.headers);
 }
 
-async function readApiCacheEntry(filePath: string): Promise<ApiCacheEntry | null> {
-  try {
-    const rawEntry = await readFile(filePath, "utf8");
-    const parsedEntry = JSON.parse(rawEntry) as unknown;
-
-    if (!isApiCacheEntry(parsedEntry)) {
-      await rm(filePath, { force: true });
-      return null;
-    }
-
-    if (parsedEntry.expiresAt <= Date.now()) {
-      await rm(filePath, { force: true });
-      return null;
-    }
-
-    return parsedEntry;
-  } catch (error) {
-    if (toNodeErrorCode(error) === "ENOENT") {
-      return null;
-    }
-
-    if (error instanceof SyntaxError) {
-      await rm(filePath, { force: true });
-      return null;
-    }
-
-    throw error;
+function readApiCacheEntry(cacheKey: string): ApiCacheEntry | null {
+  const cachedEntry = apiResponseCache.get(cacheKey);
+  if (!cachedEntry) {
+    return null;
   }
+
+  if (!isApiCacheEntry(cachedEntry) || cachedEntry.expiresAt <= Date.now()) {
+    apiResponseCache.delete(cacheKey);
+    return null;
+  }
+
+  return cachedEntry;
 }
 
-async function persistApiCacheEntry(filePath: string, entry: ApiCacheEntry): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(entry), "utf8");
-}
-
-async function cleanupAutomaticResponseFiles(directoryPath: string, fileLimit: number): Promise<void> {
-  if (fileLimit < 1) {
-    return;
-  }
-
-  let entries: Dirent<string>[];
-  try {
-    entries = await readdir(directoryPath, { withFileTypes: true });
-  } catch (error) {
-    if (toNodeErrorCode(error) === "ENOENT") {
-      return;
-    }
-
-    throw error;
-  }
-
-  const automaticFiles = await Promise.all(
-    entries
-      .filter((entry) => entry.isFile() && entry.name.startsWith(AUTOMATIC_RESPONSE_FILE_PREFIX))
-      .map(async (entry) => {
-        const filePath = path.join(directoryPath, entry.name);
-        try {
-          const fileStats = await stat(filePath);
-          return {
-            filePath,
-            name: entry.name,
-            modifiedAt: fileStats.mtimeMs,
-            createdAt: fileStats.birthtimeMs
-          };
-        } catch (error) {
-          if (toNodeErrorCode(error) === "ENOENT") {
-            return null;
-          }
-
-          throw error;
-        }
-      })
-  );
-
-  const staleFiles = automaticFiles
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    .sort((left, right) => {
-      if (right.modifiedAt !== left.modifiedAt) {
-        return right.modifiedAt - left.modifiedAt;
-      }
-
-      if (right.createdAt !== left.createdAt) {
-        return right.createdAt - left.createdAt;
-      }
-
-      return right.name.localeCompare(left.name);
-    })
-    .slice(fileLimit);
-
-  await Promise.all(staleFiles.map(async (entry) => {
-    await rm(entry.filePath, { force: true });
-  }));
+function persistApiCacheEntry(cacheKey: string, entry: ApiCacheEntry): void {
+  apiResponseCache.set(cacheKey, entry);
 }
 
 function toWorkspaceRelativePath(workspaceRoot: string, filePath: string): string {
@@ -574,37 +487,26 @@ async function buildApiResponseResult(
   requestedOutputFilePath: string | undefined,
   cached: boolean | undefined
 ): Promise<Record<string, unknown>> {
-  const bodyBytes = Buffer.byteLength(rawBody, "utf8");
-  const shouldPersistBody = !!requestedOutputFilePath || bodyBytes > storage.inlineBodyByteLimit;
-
-  if (shouldPersistBody) {
+  if (requestedOutputFilePath) {
     if (!storage.workspaceRoot) {
       throw new Error("api_request cannot save the response body because workspaceRoot is not configured");
     }
 
-    const resolvedOutputPath = requestedOutputFilePath
-      ? await resolveWorkspaceOutputPath(
-        storage.workspaceRoot,
-        storage.workspaceRootRealPathPromise ?? Promise.resolve(storage.workspaceRoot),
-        storage.userId,
-        requestedOutputFilePath
-      )
-      : createAutomaticResponsePath(storage.workspaceRoot, storage.userId, contentType);
+    const resolvedOutputPath = await resolveWorkspaceOutputPath(
+      storage.workspaceRoot,
+      storage.workspaceRootRealPathPromise ?? Promise.resolve(storage.workspaceRoot),
+      storage.userId,
+      requestedOutputFilePath
+    );
 
     await persistResponseBody(resolvedOutputPath, rawBody);
-
-    if (!requestedOutputFilePath) {
-      await cleanupAutomaticResponseFiles(path.dirname(resolvedOutputPath), storage.autoResponseFileLimit);
-    }
 
     return {
       ...response,
       ...(cached === undefined ? {} : { cached }),
       bodySaved: true,
-      ...(requestedOutputFilePath
-        ? { bodyFilePath: toWorkspaceRelativePath(storage.workspaceRoot, resolvedOutputPath) }
-        : { autoSavedBody: true }),
-      bodyBytes
+      bodyFilePath: toWorkspaceRelativePath(storage.workspaceRoot, resolvedOutputPath),
+      bodyBytes: Buffer.byteLength(rawBody, "utf8")
     };
   }
 
@@ -631,20 +533,12 @@ async function executeApiRequest(
   const cacheTtlMs = parseCacheTtlMs(args.cacheTtlMs, method);
   const bypassCache = parseBypassCache(args.bypassCache);
 
-  if (bypassCache && cacheTtlMs === undefined) {
-    throw new Error("api_request bypassCache requires cacheTtlMs");
-  }
-
-  if (cacheTtlMs !== undefined && !storage.workspaceRoot) {
-    throw new Error("api_request cacheTtlMs requires workspaceRoot to be configured");
-  }
-
-  const cacheFilePath = cacheTtlMs !== undefined && storage.workspaceRoot
-    ? createCacheEntryPath(storage.workspaceRoot, storage.userId, createCacheKey(method, url, headers))
+  const cacheKey = cacheTtlMs !== undefined
+    ? createCacheKey(storage.userId, method, url, headers)
     : null;
 
-  if (cacheFilePath && !bypassCache) {
-    const cachedResponse = await readApiCacheEntry(cacheFilePath);
+  if (cacheKey && !bypassCache) {
+    const cachedResponse = readApiCacheEntry(cacheKey);
     if (cachedResponse) {
       return await buildApiResponseResult(
         cachedResponse.response,
@@ -674,9 +568,9 @@ async function executeApiRequest(
     headers: sanitizeResponseHeaders(response.headers)
   };
 
-  if (cacheFilePath && response.ok && cacheTtlMs !== undefined) {
+  if (cacheKey && response.ok && cacheTtlMs !== undefined) {
     const now = Date.now();
-    await persistApiCacheEntry(cacheFilePath, {
+    persistApiCacheEntry(cacheKey, {
       version: 1,
       cachedAt: now,
       expiresAt: now + cacheTtlMs,
@@ -692,7 +586,7 @@ async function executeApiRequest(
     contentType,
     storage,
     requestedOutputFilePath,
-    cacheFilePath ? false : undefined
+    cacheKey ? false : undefined
   );
 }
 
@@ -702,7 +596,6 @@ export function createApiRequestTool(options: {
   userId?: string;
   fetchImpl?: typeof fetch;
   inlineBodyByteLimit?: number;
-  autoResponseFileLimit?: number;
 } = {}): LLMToolDefinition | null {
   const envSource = options.envSource ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -718,7 +611,7 @@ export function createApiRequestTool(options: {
 
   return {
     name: API_TOOL_NAME,
-    description: "Call the workspace-configured API using a path relative to API_BASE_URL. Host-owned auth and security headers are applied automatically. Small responses are returned inline; provide outputFilePath when you need a reusable saved-body path. Large responses spill to disk automatically without exposing the generated file path. GET requests can opt into user-scoped file-backed caching with cacheTtlMs.",
+    description: "Call the workspace-configured API using a path relative to API_BASE_URL. Host-owned auth and security headers are applied automatically. Responses are returned inline by default; provide outputFilePath when you need a saved-body path. GET requests can opt into in-memory caching with cacheTtlMs.",
     evidenceKind: "external_action",
     parameters: {
       type: "object",
@@ -754,7 +647,7 @@ export function createApiRequestTool(options: {
         },
         cacheTtlMs: {
           type: "number",
-          description: "Optional positive TTL in milliseconds for GET requests. When provided, successful responses are cached in user-scoped tool storage and reused until the TTL expires."
+          description: "Optional positive TTL in milliseconds for GET requests. When provided, successful responses are cached in process memory and reused until the TTL expires."
         },
         bypassCache: {
           type: "boolean",
@@ -767,7 +660,6 @@ export function createApiRequestTool(options: {
       workspaceRoot: options.workspaceRoot,
       userId,
       inlineBodyByteLimit: options.inlineBodyByteLimit ?? DEFAULT_INLINE_BODY_BYTE_LIMIT,
-      autoResponseFileLimit: options.autoResponseFileLimit ?? DEFAULT_AUTO_RESPONSE_FILE_LIMIT,
       workspaceRootRealPathPromise
     }, args, context, fetchImpl)
   };

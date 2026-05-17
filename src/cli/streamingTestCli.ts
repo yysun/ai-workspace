@@ -621,9 +621,6 @@ export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): stri
   const lines: string[] = [];
 
   for (const answer of answers) {
-    const requestLabel = answer.requestId ? ` for request ${answer.requestId}` : "";
-    lines.push(`- Answer${requestLabel}:`);
-
     for (const selection of answer.selections) {
       const questionLabel = selection.questionText
         ? `${selection.questionId} (${selection.questionText})`

@@ -30,7 +30,7 @@ This page covers the host-owned tool layer that sits beside `llm-runtime`'s gene
 
 Saved API bodies are tightly scoped. They must stay inside `users/<id>/data/api-responses`, and the tool checks real paths so symlinks cannot redirect writes outside the workspace.
 
-Cached API entries are also user-scoped. They live under `users/<id>/data/api-cache`, are keyed by the normalized request URL plus request headers, and are reused only until the caller-provided TTL expires.
+Cached API entries are process-local. They are keyed by the resolved user identity plus the normalized request URL and request headers, and are reused only until the caller-provided TTL expires.
 
 ## AI Workspace Content Tools
 
