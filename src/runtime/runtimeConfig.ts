@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
- * Recent changes: disables the built-in read_file so a host-owned cached replacement can be registered per request.
+ * Recent changes: disables the built-in read_file and guides the model toward a non-reserved host-owned cached workspace_read_file tool.
  */
 
 import type {
@@ -32,6 +32,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
   "If an external API or network lookup is required, use an available tool instead of narrating intent.",
   "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host.",
+  "When available, prefer `workspace_read_file` for workspace file reads; it is host-owned and may replace the built-in `read_file` when cached reads are configured.",
   "Prefer `shell_cmd` for authenticated API work only when workspace instructions explicitly require `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
   "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
   "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",

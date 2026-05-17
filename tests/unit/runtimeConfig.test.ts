@@ -1,7 +1,7 @@
 /*
  * Feature: unit tests for llm-runtime request configuration helpers.
  * Notes: verifies prompt composition and generic LLM_* defaults without requiring live provider calls.
- * Recent changes: moved unit coverage into tests/unit.
+ * Recent changes: verifies the built-in read_file is disabled so the host-owned cached replacement can be registered.
  */
 
 import assert from "node:assert/strict";
@@ -149,7 +149,7 @@ test("resolveMaxTokens and resolveTemperature fall back to generic env defaults"
 test("createBuiltInSelection disables load_skill", () => {
   const selection = createBuiltInSelection();
   const normalized = normalizeBuiltInToolSelection(selection);
-  const disabledTools = new Set(["load_skill", "web_fetch"]);
+  const disabledTools = new Set(["load_skill", "web_fetch", "read_file"]);
 
   for (const toolName of BUILT_IN_TOOL_NAMES) {
     assert.equal(normalized[toolName], !disabledTools.has(toolName));

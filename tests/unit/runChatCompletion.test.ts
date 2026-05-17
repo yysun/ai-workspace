@@ -1,16 +1,31 @@
 /*
  * Feature: unit coverage for llm-runtime orchestration helpers.
  * Notes: verifies host-side helpers without calling a provider.
- * Recent changes: removed host-side text-classification helpers; llm-runtime classifies text responses structurally.
+ * Recent changes: adds coverage for host-owned request tool registration alongside runtime helper behavior and the non-reserved cached file-read tool name.
  */
 
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createRequestTools,
   isPendingHumanInputToolResult,
   prepareToolCallArguments,
   redactToolResultForEvent
 } from "../../src/runtime/runChatCompletion.js";
+
+test("createRequestTools always includes workspace_read_file and conditionally includes api_request", () => {
+  assert.deepEqual(
+    createRequestTools("/workspace", {}).map((tool) => tool.name),
+    ["workspace_read_file"]
+  );
+
+  assert.deepEqual(
+    createRequestTools("/workspace", {
+      API_BASE_URL: "https://api.example.test/root"
+    }).map((tool) => tool.name),
+    ["workspace_read_file", "api_request"]
+  );
+});
 
 test("prepareToolCallArguments expands shell env references for execution", () => {
   const prepared = prepareToolCallArguments("shell_cmd", {

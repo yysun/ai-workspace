@@ -406,6 +406,25 @@ test("formatToolResultEventLine prefers requested read_file line ranges", () => 
   );
 });
 
+test("formatToolResultEventLine suppresses workspace_read_file previews", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "workspace_read_file",
+      "---\ncreated_at: 2026-05-17T00:00:00Z\nupdated_at: 2026-05-17T00:00:00Z\n",
+      "default",
+      {
+        filePath: "users/3/data/contacts/99000002/current/sources.md"
+      },
+      1
+    ),
+    [
+      "",
+      "  ✓ workspace_read_file 1ms · 3 lines",
+      ""
+    ].join("\n")
+  );
+});
+
 test("formatToolResultEventLine uses event timing for shell_cmd markdown results", () => {
   assert.equal(
     formatToolResultEventLine(
@@ -570,6 +589,69 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
       sharedTerminal.text(),
       /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
     );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("streamAssistantTurn does not preview workspace_read_file content", async () => {
+  const sharedTerminal = createWritableCapture(true);
+  const originalFetch = global.fetch;
+
+  global.fetch = (async () => createSseResponse([
+    {
+      event: "tool.call",
+      data: {
+        type: "tool.call",
+        name: "workspace_read_file",
+        args: {
+          filePath: "users/3/data/contacts/99000002/current/sources.md"
+        },
+        toolCallId: "call_workspace_read"
+      }
+    },
+    {
+      event: "tool.result",
+      data: {
+        type: "tool.result",
+        name: "workspace_read_file",
+        result: "---\ncreated_at: 2026-05-17T00:00:00Z\nupdated_at: 2026-05-17T00:00:00Z\n",
+        durationMs: 1,
+        toolCallId: "call_workspace_read"
+      }
+    },
+    {
+      event: "message.done",
+      data: {
+        type: "message.done",
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      }
+    },
+    {
+      event: "done",
+      data: {}
+    }
+  ])) as typeof fetch;
+
+  try {
+    await streamAssistantTurn({
+      baseUrl: "http://localhost:3000",
+      model: "default",
+      autoContinue: false,
+      autoContinueMessage: "go ahead",
+      autoContinueTurns: 1,
+      traceMode: "default"
+    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
+
+    assert.match(
+      sharedTerminal.text(),
+      /↳ workspace_read_file users\/3\/data\/contacts\/99000002\/current\/sources\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ workspace_read_file 1ms · 3 lines/u
+    );
+    assert.doesNotMatch(sharedTerminal.text(), /created_at: 2026-05-17T00:00:00Z/u);
+    assert.doesNotMatch(sharedTerminal.text(), /updated_at: 2026-05-17T00:00:00Z/u);
   } finally {
     global.fetch = originalFetch;
   }

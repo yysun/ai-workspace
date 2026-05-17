@@ -4,6 +4,8 @@
  * Recent changes: added bounded previews for shell, file, and generic tool activity plus debug-mode raw rendering.
  */
 
+import { WORKSPACE_READ_FILE_TOOL_NAME } from "../tools/readFileTool.js";
+
 export type TraceMode = "default" | "verbose" | "debug";
 
 export type ToolCallView = {
@@ -189,6 +191,10 @@ function formatRequestedLineSummary(args: unknown): string | null {
   }
 
   return null;
+}
+
+function isReadFileLikeToolName(toolName: string): boolean {
+  return toolName === "read_file" || toolName === WORKSPACE_READ_FILE_TOOL_NAME;
 }
 
 function formatFileSize(bytes: number): string {
@@ -387,7 +393,12 @@ function summarizeSearchFilesResult(result: unknown, forcedDurationMs?: number):
   };
 }
 
-function summarizeReadFileResult(result: unknown, forcedDurationMs?: number, callArgs?: unknown): ToolResultView {
+function summarizeReadFileResult(
+  result: unknown,
+  forcedDurationMs?: number,
+  callArgs?: unknown,
+  toolName = "read_file"
+): ToolResultView {
   const record = parseJsonRecord(result);
   const content = typeof result === "string"
     ? result
@@ -395,7 +406,7 @@ function summarizeReadFileResult(result: unknown, forcedDurationMs?: number, cal
   const lineCount = content ? countLines(content) : null;
   const requestedLineSummary = formatRequestedLineSummary(callArgs);
   return {
-    name: "read_file",
+    name: toolName,
     ok: inferOk(record, true),
     durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
     summary: requestedLineSummary ?? (lineCount === null ? "completed" : formatLineCount(lineCount)),
@@ -553,7 +564,7 @@ export function summarizeToolCall(toolName: string, args: unknown): ToolCallView
     return { name: toolName, summary: summarizePathLikeCall(args, "query", "pattern", "glob", "includePattern"), args };
   }
 
-  if (toolName === "read_file" && isRecord(args)) {
+  if (isReadFileLikeToolName(toolName) && isRecord(args)) {
     return { name: toolName, summary: summarizePathLikeCall(args, "filePath", "path"), args };
   }
 
@@ -573,8 +584,8 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
     return summarizeSearchFilesResult(result, durationMs);
   }
 
-  if (toolName === "read_file") {
-    return summarizeReadFileResult(result, durationMs, callArgs);
+  if (isReadFileLikeToolName(toolName)) {
+    return summarizeReadFileResult(result, durationMs, callArgs, toolName);
   }
 
   if (toolName === "path_exists") {

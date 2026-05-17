@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken and registers a host-owned cached read_file tool per request.
+ * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken and registers a host-owned cached workspace_read_file tool per request.
  */
 
 import {
