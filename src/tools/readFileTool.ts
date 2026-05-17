@@ -162,17 +162,11 @@ function sliceContentByLineRange(content: string, startLine: number, endLine?: n
 function formatTruncatedReadResult(
   requestedPath: string,
   content: string,
-  startLine: number,
-  endLine: number | undefined,
   maxReturnCharacters: number
 ): string {
-  const requestedRange = typeof endLine === "number"
-    ? `lines ${startLine}-${endLine}`
-    : (startLine === 1 ? "the full file" : `lines ${startLine}+`);
-
   const visibleContent = content.slice(0, maxReturnCharacters);
   return [
-    `[workspace_read_file truncated ${requestedPath}: ${requestedRange} is ${content.length} characters; returning the first ${visibleContent.length} characters to stay within the token budget. Re-run with a narrower startLine/endLine range if needed.]`,
+    `[workspace_read_file truncated ${requestedPath}: requested content is ${content.length} characters; returning the first ${visibleContent.length} characters to stay within the token budget.]`,
     visibleContent
   ].join("\n\n");
 }
@@ -210,7 +204,7 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
 
   return {
     name: WORKSPACE_READ_FILE_TOOL_NAME,
-    description: "Read a file from the current workspace. Small reads return the requested content directly; large reads are truncated with a notice to keep tool output within the token budget. Optional startLine and endLine arguments can narrow the returned slice.",
+    description: "Read a file from the current workspace. Small reads return the requested content directly; large reads are truncated with a notice to keep tool output within the token budget.",
     evidenceKind: "read",
     parameters: {
       type: "object",
@@ -219,16 +213,6 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
         filePath: {
           type: "string",
           description: "Relative or absolute file path within the current workspace root."
-        },
-        startLine: {
-          type: "integer",
-          description: "Optional 1-based line number where the returned slice should start.",
-          minimum: 1
-        },
-        endLine: {
-          type: "integer",
-          description: "Optional 1-based line number where the returned slice should end.",
-          minimum: 1
         }
       },
       required: ["filePath"]
@@ -263,7 +247,7 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
         const fileContent = await readFileImpl(resolvedFilePath);
         const slicedContent = sliceContentByLineRange(fileContent, startLine, endLine);
         const result = slicedContent.length > maxReturnCharacters
-          ? formatTruncatedReadResult(requestedPath, slicedContent, startLine, endLine, maxReturnCharacters)
+          ? formatTruncatedReadResult(requestedPath, slicedContent, maxReturnCharacters)
           : slicedContent;
         storeCacheEntry(cache, cacheKey, result, maxCacheEntries);
         return result;

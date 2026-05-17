@@ -48,7 +48,7 @@ test("composeSystemPrompt appends AGENTS.md content to the default system prompt
   assert.doesNotMatch(prompt, /Tool working directory:/);
   assert.match(prompt, /Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable\./);
   assert.match(prompt, /Responses are returned inline by default; pass outputFilePath under the current user's workspace directory only when you want the body saved to disk and the path returned explicitly\./);
-  assert.match(prompt, /prefer `workspace_read_file` for workspace file reads; it is host-owned, supports optional startLine\/endLine ranges, and truncates oversized reads to stay within the token budget\./);
+  assert.match(prompt, /prefer `workspace_read_file` for workspace file reads; it is host-owned and truncates oversized reads to stay within the token budget\./);
   assert.match(prompt, /For repeatable GET requests, pass cacheTtlMs to enable in-memory caching and bypassCache when you need a refresh\./);
   assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
 });

@@ -83,6 +83,22 @@ test("createReadFileTool returns the requested line range when provided", async 
   });
 });
 
+test("createReadFileTool only exposes filePath in the tool schema", () => {
+  const tool = createReadFileTool({ workspaceRoot: "/workspace", cache: new Map<string, string>() });
+
+  assert.deepEqual(tool.parameters, {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Relative or absolute file path within the current workspace root."
+      }
+    },
+    required: ["filePath"]
+  });
+});
+
 test("createReadFileTool truncates oversized reads with a clear notice", async () => {
   await withTempDir(async (tempDir) => {
     const filePath = path.join(tempDir, "large.json");
@@ -99,7 +115,7 @@ test("createReadFileTool truncates oversized reads with a clear notice", async (
     assert.equal(
       result,
       [
-        "[workspace_read_file truncated large.json: the full file is 78 characters; returning the first 24 characters to stay within the token budget. Re-run with a narrower startLine/endLine range if needed.]",
+        "[workspace_read_file truncated large.json: requested content is 78 characters; returning the first 24 characters to stay within the token budget.]",
         content.slice(0, 24)
       ].join("\n\n")
     );
