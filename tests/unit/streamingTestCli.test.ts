@@ -1090,6 +1090,7 @@ test("formatHumanInputCheckpoint renders a user checkpoint instead of a tool tra
       "  1. Contact",
       "  2. Account",
       "  3. Not sure",
+      "  0. Exit UI",
       ""
     ].join("\n")
   );
@@ -1122,11 +1123,43 @@ test("collectHumanInputAnswers writes a readable user checkpoint", async () => {
     }
   }, output.output);
 
+  assert.ok(answers);
   assert.deepEqual(answers[0]?.selections[0]?.selectedOptions, [
     { id: "jazz-gill-1", label: "Jazz Gill" }
   ]);
   assert.match(output.text(), /^\nassistant needs input:/);
   assert.match(output.text(), /Which contact\?/);
+  assert.match(output.text(), /0\. Exit UI/);
+});
+
+test("collectHumanInputAnswers returns null when the user exits the prompt UI", async () => {
+  const output = createWritableCapture(true);
+  const answers = await collectHumanInputAnswers([
+    {
+      toolName: "ask_user_input",
+      requestId: "call_123",
+      type: "single-select",
+      allowSkip: false,
+      questions: [
+        {
+          header: "Contact Match",
+          id: "contact_match",
+          question: "Which contact?",
+          options: [
+            { id: "jazz-gill-1", label: "Jazz Gill" }
+          ]
+        }
+      ]
+    }
+  ], {
+    async question(query: string) {
+      output.output.write(query);
+      output.output.write("0\n");
+      return "0";
+    }
+  }, output.output);
+
+  assert.equal(answers, null);
 });
 
 test("writeQueuedHumanInputFollowUp includes the readable answer payload", () => {
@@ -1218,6 +1251,7 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
         "",
         "  1. Jazz Gill (Contact ID 123)",
         "  2. Not sure / search all",
+        "  0. Exit UI",
         ""
       ].join("\n")
     );
@@ -1270,6 +1304,7 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       }
     }, output.output);
 
+    assert.ok(answers);
     writeQueuedHumanInputFollowUp(output.output, formatHumanInputAnswerMessage(answers));
 
     assert.equal(turnResult.assistantText, "");
@@ -1284,7 +1319,8 @@ test("Jazz Gill contact disambiguation transcript uses correct ask_user_input re
       "",
       "  1. Jazz Gill (Contact ID 123)",
       "  2. Not sure / search all",
-      "Select a number or option id: 1",
+      "  0. Exit UI",
+      "Select a number or option id, or type a custom answer. Enter 0 to exit UI: 1",
       "- Answer for request call_contact_match:",
       "  - contact_match (Which Jazz Gill are you looking for?): jazz-gill-1 (Jazz Gill (Contact ID 123))",
       ""
@@ -1318,6 +1354,17 @@ test("parseHumanInputSelection supports option numbers, ids, and skippable promp
       questionText: "Which mode?",
       skipped: false,
       selectedOptions: [{ id: "safe", label: "Safe" }]
+    }
+  });
+
+  assert.deepEqual(parseHumanInputSelection(question, "single-select", false, "Need audit logs"), {
+    ok: true,
+    selection: {
+      questionId: "mode",
+      questionText: "Which mode?",
+      skipped: false,
+      selectedOptions: [],
+      enteredText: "Need audit logs"
     }
   });
 
@@ -1366,12 +1413,23 @@ test("formatHumanInputAnswerMessage serializes selected ids and labels", () => {
         {
           questionId: "notes",
           questionText: "Any notes?",
+          skipped: false,
+          selectedOptions: [],
+          enteredText: "Need SOC 2 docs"
+        },
+        {
+          questionId: "empty",
+          questionText: "Leave blank?",
           skipped: true,
           selectedOptions: []
         }
       ]
     }
   ]), [
+    "- Answer for request call_123:",
+    "  - mode (Which mode?): safe, full (Safe, Full)",
+    "  - notes (Any notes?): Need SOC 2 docs",
+    "  - empty (Leave blank?): skipped"
   ].join("\n"));
 });
 
@@ -1520,6 +1578,22 @@ test("appendHumanInputAnswerMessages appends tool messages keyed to the paused t
   assert.equal(updated.at(-1)?.role, "tool");
   assert.equal(updated.at(-1)?.tool_call_id, "call_123");
   assert.equal(updated.at(-1)?.name, "ask_user_input");
+  assert.deepEqual(JSON.parse(updated.at(-1)?.content ?? "{}"), {
+    requestId: "call_123",
+    answers: {
+      mode: ["safe"]
+    },
+    selections: [
+      {
+        questionId: "mode",
+        questionText: "Which mode?",
+        skipped: false,
+        selectedOptions: [
+          { id: "safe", label: "Safe" }
+        ]
+      }
+    ]
+  });
 });
 
 test("commitAssistantResponse appends only the resumed assistant reply", () => {

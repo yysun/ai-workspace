@@ -92,6 +92,7 @@ export type HumanInputQuestion = {
   id: string;
   question: string;
   options: HumanInputOption[];
+  allowFreeformInput?: boolean;
 };
 
 export type PendingHumanInputRequest = {
@@ -107,6 +108,7 @@ export type HumanInputSelection = {
   questionText?: string;
   skipped: boolean;
   selectedOptions: HumanInputOption[];
+  enteredText?: string;
 };
 
 export type HumanInputAnswer = {
@@ -119,6 +121,7 @@ export type HumanInputSelectionParseResult =
   | { ok: false; error: string };
 
 const WARNING_AUTO_CONTINUE_GRACE_TURNS = 2;
+const EXIT_HUMAN_INPUT_TOKEN = "0";
 const HUMAN_INPUT_TOOL_NAMES = new Set([
   "ask_user_input",
   "human_intervention_request",
@@ -346,8 +349,13 @@ function parseHumanInputQuestion(value: unknown): HumanInputQuestion | null {
     header,
     id,
     question,
-    options: options as HumanInputOption[]
+    options: options as HumanInputOption[],
+    ...(value.allowFreeformInput === false ? { allowFreeformInput: false } : {})
   };
+}
+
+function allowsFreeformInput(question: HumanInputQuestion): boolean {
+  return question.allowFreeformInput !== false;
 }
 
 function normalizeHumanInputRequest(
@@ -475,6 +483,19 @@ export function parseHumanInputSelection(
 
   const tokens = trimmedInput.split(",").map((token) => token.trim()).filter(Boolean);
   if (selectionType === "single-select" && tokens.length !== 1) {
+    if (allowsFreeformInput(question)) {
+      return {
+        ok: true,
+        selection: {
+          questionId: question.id,
+          questionText: question.question,
+          skipped: false,
+          selectedOptions: [],
+          enteredText: trimmedInput
+        }
+      };
+    }
+
     return { ok: false, error: "Select exactly one option." };
   }
 
@@ -482,6 +503,19 @@ export function parseHumanInputSelection(
   for (const token of tokens) {
     const option = resolveHumanInputOption(question, token);
     if (!option) {
+      if (allowsFreeformInput(question)) {
+        return {
+          ok: true,
+          selection: {
+            questionId: question.id,
+            questionText: question.question,
+            skipped: false,
+            selectedOptions: [],
+            enteredText: trimmedInput
+          }
+        };
+      }
+
       return { ok: false, error: `Unknown option: ${token}` };
     }
 
@@ -511,6 +545,8 @@ export function formatHumanInputCheckpoint(
     lines.push(`  ${index + 1}. ${option.label}`);
   });
 
+  lines.push(`  ${EXIT_HUMAN_INPUT_TOKEN}. Exit UI`);
+
   if (request.allowSkip) {
     lines.push("", "  Press Enter to skip.");
   }
@@ -526,19 +562,22 @@ function writeHumanInputQuestion(
   output.write(`\n${formatHumanInputCheckpoint(request, question)}`);
 }
 
-function createHumanInputPrompt(request: PendingHumanInputRequest): string {
-  const selectionHint = request.type === "multiple-select"
-    ? "Select numbers or option ids separated by commas"
-    : "Select a number or option id";
+function createHumanInputPrompt(request: PendingHumanInputRequest, question: HumanInputQuestion): string {
+  const selectionHint = question.options.length === 0
+    ? "Type your answer"
+    : request.type === "multiple-select"
+      ? "Select numbers or option ids separated by commas"
+      : "Select a number or option id";
+  const freeformHint = allowsFreeformInput(question) ? ", or type a custom answer" : "";
   const skipHint = request.allowSkip ? ", or press Enter to skip" : "";
-  return `${selectionHint}${skipHint}: `;
+  return `${selectionHint}${freeformHint}${skipHint}. Enter ${EXIT_HUMAN_INPUT_TOKEN} to exit UI: `;
 }
 
 export async function collectHumanInputAnswers(
   requests: PendingHumanInputRequest[],
   prompt: QuestionPrompt,
   output: WritableLike
-): Promise<HumanInputAnswer[]> {
+): Promise<HumanInputAnswer[] | null> {
   const answers: HumanInputAnswer[] = [];
 
   for (const request of requests) {
@@ -548,7 +587,11 @@ export async function collectHumanInputAnswers(
       writeHumanInputQuestion(output, request, question);
 
       while (true) {
-        const rawSelection = await prompt.question(createHumanInputPrompt(request));
+        const rawSelection = await prompt.question(createHumanInputPrompt(request, question));
+        if (rawSelection.trim() === EXIT_HUMAN_INPUT_TOKEN) {
+          return null;
+        }
+
         const parsedSelection = parseHumanInputSelection(
           question,
           request.type,
@@ -588,6 +631,11 @@ export function formatHumanInputAnswerMessage(answers: HumanInputAnswer[]): stri
 
       if (selection.skipped) {
         lines.push(`  - ${questionLabel}: skipped`);
+        continue;
+      }
+
+      if (selection.enteredText) {
+        lines.push(`  - ${questionLabel}: ${selection.enteredText}`);
         continue;
       }
 
@@ -711,7 +759,7 @@ function createHumanInputAnswerPayload(answer: HumanInputAnswer): Record<string,
     answers: Object.fromEntries(
       answer.selections.map((selection) => [
         selection.questionId,
-        selection.skipped ? null : selection.selectedOptions.map((option) => option.id)
+        selection.skipped ? null : selection.enteredText ?? selection.selectedOptions.map((option) => option.id)
       ])
     ),
     selections: answer.selections
@@ -1198,6 +1246,11 @@ export async function runStreamingTestCli(args = process.argv.slice(2)): Promise
 
           if (result.humanInputRequests.length > 0) {
             const answers = await collectHumanInputAnswers(result.humanInputRequests, readline, stdout);
+            if (answers === null) {
+              stdout.write("exiting\n");
+              return;
+            }
+
             history = appendHumanInputAnswerMessages(history, result.humanInputRequests, answers);
             writeQueuedHumanInputFollowUp(stdout, formatHumanInputAnswerMessage(answers));
             nextInput = null;
