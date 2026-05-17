@@ -11,6 +11,7 @@ import type { LLMToolDefinition } from "llm-runtime";
 
 export const WORKSPACE_READ_FILE_TOOL_NAME = "workspace_read_file";
 const DEFAULT_MAX_CACHE_ENTRIES = 512;
+const DEFAULT_MAX_RETURN_CHARACTERS = 40_000;
 const READ_FILE_CACHE = new Map<string, string>();
 
 type ReadFileTextImpl = (filePath: string) => Promise<string>;
@@ -21,6 +22,7 @@ type ReadFileToolOptions = {
   workspaceRoot: string;
   cache?: Map<string, string>;
   maxCacheEntries?: number;
+  maxReturnCharacters?: number;
   readFileImpl?: ReadFileTextImpl;
   statImpl?: StatImpl;
   realpathImpl?: RealpathImpl;
@@ -57,13 +59,15 @@ function parseOptionalPositiveInteger(value: unknown, fieldName: string): number
   return value as number;
 }
 
-function validateLegacyRangeArgs(args: Record<string, unknown>): void {
+function resolveRequestedRange(args: Record<string, unknown>): { startLine: number; endLine?: number } {
   const startLine = parseOptionalPositiveInteger(args.startLine, "startLine") ?? 1;
   const endLine = parseOptionalPositiveInteger(args.endLine, "endLine");
 
   if (typeof endLine === "number" && endLine < startLine) {
     throw new Error("read_file endLine must be greater than or equal to startLine");
   }
+
+  return { startLine, endLine };
 }
 
 function isPathInside(parentPath: string, childPath: string): boolean {
@@ -155,6 +159,24 @@ function sliceContentByLineRange(content: string, startLine: number, endLine?: n
   return content.slice(startIndex, endIndex);
 }
 
+function formatTruncatedReadResult(
+  requestedPath: string,
+  content: string,
+  startLine: number,
+  endLine: number | undefined,
+  maxReturnCharacters: number
+): string {
+  const requestedRange = typeof endLine === "number"
+    ? `lines ${startLine}-${endLine}`
+    : (startLine === 1 ? "the full file" : `lines ${startLine}+`);
+
+  const visibleContent = content.slice(0, maxReturnCharacters);
+  return [
+    `[workspace_read_file truncated ${requestedPath}: ${requestedRange} is ${content.length} characters; returning the first ${visibleContent.length} characters to stay within the token budget. Re-run with a narrower startLine/endLine range if needed.]`,
+    visibleContent
+  ].join("\n\n");
+}
+
 function normalizeReadFileError(error: unknown, requestedPath: string): Error {
   if (error instanceof Error && error.message.startsWith("read_file ")) {
     return error;
@@ -181,13 +203,14 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
     .catch(() => workspaceRootPath);
   const cache = options.cache ?? READ_FILE_CACHE;
   const maxCacheEntries = options.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES;
+  const maxReturnCharacters = options.maxReturnCharacters ?? DEFAULT_MAX_RETURN_CHARACTERS;
   const readFileImpl = options.readFileImpl ?? defaultReadFileText;
   const statImpl = options.statImpl ?? stat;
   const realpathImpl = options.realpathImpl ?? realpath;
 
   return {
     name: WORKSPACE_READ_FILE_TOOL_NAME,
-    description: "Read a file from the current workspace and return the full file content. Legacy startLine and endLine arguments are accepted for compatibility but ignored.",
+    description: "Read a file from the current workspace. Small reads return the requested content directly; large reads are truncated with a notice to keep tool output within the token budget. Optional startLine and endLine arguments can narrow the returned slice.",
     evidenceKind: "read",
     parameters: {
       type: "object",
@@ -199,12 +222,12 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
         },
         startLine: {
           type: "integer",
-          description: "Legacy compatibility field. Ignored; the tool returns the full file.",
+          description: "Optional 1-based line number where the returned slice should start.",
           minimum: 1
         },
         endLine: {
           type: "integer",
-          description: "Legacy compatibility field. Ignored; the tool returns the full file.",
+          description: "Optional 1-based line number where the returned slice should end.",
           minimum: 1
         }
       },
@@ -213,7 +236,7 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
     execute: async (args) => {
       const requestedPath = trimPath(args.filePath);
       try {
-        validateLegacyRangeArgs(args);
+        const { startLine, endLine } = resolveRequestedRange(args);
         const resolvedFilePath = await resolveWorkspaceFilePath(
           workspaceRootPath,
           workspaceRootRealPathPromise,
@@ -228,8 +251,8 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
 
         const cacheKey = createCacheKey(
           resolvedFilePath,
-          1,
-          undefined,
+          startLine,
+          endLine,
           createFileVersion(fileStats)
         );
         const cached = cache.get(cacheKey);
@@ -237,9 +260,13 @@ export function createReadFileTool(options: ReadFileToolOptions): LLMToolDefinit
           return cached;
         }
 
-        const content = await readFileImpl(resolvedFilePath);
-        storeCacheEntry(cache, cacheKey, content, maxCacheEntries);
-        return content;
+        const fileContent = await readFileImpl(resolvedFilePath);
+        const slicedContent = sliceContentByLineRange(fileContent, startLine, endLine);
+        const result = slicedContent.length > maxReturnCharacters
+          ? formatTruncatedReadResult(requestedPath, slicedContent, startLine, endLine, maxReturnCharacters)
+          : slicedContent;
+        storeCacheEntry(cache, cacheKey, result, maxCacheEntries);
+        return result;
       } catch (error) {
         throw normalizeReadFileError(error, requestedPath);
       }

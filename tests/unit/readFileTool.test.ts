@@ -71,15 +71,38 @@ test("createReadFileTool invalidates the cache when the file version changes", a
   });
 });
 
-test("createReadFileTool ignores legacy line-range args and still returns full content", async () => {
+test("createReadFileTool returns the requested line range when provided", async () => {
   await withTempDir(async (tempDir) => {
     const filePath = path.join(tempDir, "notes.md");
     await writeFile(filePath, "alpha\nbeta\ngamma\ndelta\n", "utf8");
 
     const tool = createReadFileTool({ workspaceRoot: tempDir, cache: new Map<string, string>() });
-    const result = await tool.execute?.({ filePath: "notes.md", startLine: 1, endLine: 2 });
+    const result = await tool.execute?.({ filePath: "notes.md", startLine: 2, endLine: 3 });
 
-    assert.equal(result, "alpha\nbeta\ngamma\ndelta\n");
+    assert.equal(result, "beta\ngamma\n");
+  });
+});
+
+test("createReadFileTool truncates oversized reads with a clear notice", async () => {
+  await withTempDir(async (tempDir) => {
+    const filePath = path.join(tempDir, "large.json");
+    const content = `{\"items\":[\"${"x".repeat(64)}\"]}`;
+    await writeFile(filePath, content, "utf8");
+
+    const tool = createReadFileTool({
+      workspaceRoot: tempDir,
+      cache: new Map<string, string>(),
+      maxReturnCharacters: 24
+    });
+    const result = await tool.execute?.({ filePath: "large.json" });
+
+    assert.equal(
+      result,
+      [
+        "[workspace_read_file truncated large.json: the full file is 78 characters; returning the first 24 characters to stay within the token budget. Re-run with a narrower startLine/endLine range if needed.]",
+        content.slice(0, 24)
+      ].join("\n\n")
+    );
   });
 });
 

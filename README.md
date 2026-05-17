@@ -196,7 +196,7 @@ Per request, the server:
 - All `llm-runtime` built-ins are enabled by default through the runtime's built-in selection contract.
 - `LLM_PERMISSION` is passed to `llm-runtime`; the server does not hide or narrow built-ins based on permission.
 
-When `${WORKSPACE_ROOT}/.env` defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, and observable tool events redact configured secrets.
+When `${WORKSPACE_ROOT}/.env` defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, observable tool events redact configured secrets, and `GET` calls can opt into user-scoped file-backed caching with `cacheTtlMs` and `bypassCache`.
 
 For external API tasks, prefer `api_request` for the configured workspace API surface, prefer `shell_cmd` when the workspace instructions or API guide explicitly require authenticated `curl` calls, and prefer `web_fetch` only for simple unauthenticated fetches.
 
@@ -243,6 +243,7 @@ Workspace runtime variables:
 - If `${WORKSPACE_ROOT}/.env` exists, it is loaded before each chat request.
 - This is intended for workspace-local variables such as `API_BASE_URL` and `API_ACCESS_TOKEN`.
 - When `API_BASE_URL` is present, the runtime registers `api_request` and constrains it to paths under that base URL.
+- `api_request` supports opt-in `GET` caching through `cacheTtlMs` and `bypassCache`; cache entries are stored under the user-scoped tool storage and refreshed on successful network responses.
 
 ## Docker
 

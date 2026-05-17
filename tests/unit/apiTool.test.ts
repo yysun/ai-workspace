@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -157,6 +157,47 @@ test("api_request saves the raw response body to outputFilePath when requested",
   });
 });
 
+test("api_request accepts outputFilePath relative to the user api-responses directory", async () => {
+  await withTempDir(async (tempDir) => {
+    const tool = createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      },
+      workspaceRoot: tempDir,
+      userId: "3",
+      fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
+        status: 200,
+        statusText: "OK",
+        headers: {
+          "content-type": "application/json"
+        }
+      })
+    });
+
+    const result = await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      outputFilePath: "api/data/users/me/notes.json"
+    }, {});
+
+    assert.deepEqual(result, {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      url: "https://api.example.test/v1/notes",
+      headers: {
+        "content-type": "application/json"
+      },
+      bodySaved: true,
+      bodyFilePath: "users/3/data/api-responses/api/data/users/me/notes.json",
+      bodyBytes: Buffer.byteLength(JSON.stringify({ huge: true, note: "saved" }), "utf8")
+    });
+
+    const savedBody = await readFile(path.join(tempDir, "users/3/data/api-responses/api/data/users/me/notes.json"), "utf8");
+    assert.equal(savedBody, JSON.stringify({ huge: true, note: "saved" }));
+  });
+});
+
 test("api_request rejects absolute outputFilePath values", async () => {
   await withTempDir(async (tempDir) => {
     const tool = createApiRequestTool({
@@ -280,17 +321,23 @@ test("api_request automatically spills oversized responses to a user-scoped file
 
     const typedResult = result as {
       bodySaved: boolean;
-      bodyFilePath: string;
+      autoSavedBody: boolean;
+      bodyFilePath?: string;
       bodyBytes: number;
       body?: unknown;
     };
 
     assert.equal(typedResult.bodySaved, true);
+    assert.equal(typedResult.autoSavedBody, true);
     assert.equal(typedResult.bodyBytes, Buffer.byteLength(largeBody, "utf8"));
-    assert.match(typedResult.bodyFilePath, /^users\/tenant_user_9\/data\/api-responses\/api-response-.+\.json$/);
+    assert.equal("bodyFilePath" in typedResult, false);
     assert.equal("body" in typedResult, false);
 
-    const savedBody = await readFile(path.join(tempDir, typedResult.bodyFilePath), "utf8");
+    const responseDir = path.join(tempDir, "users/tenant_user_9/data/api-responses");
+    const savedEntries = await readdir(responseDir);
+    assert.equal(savedEntries.length, 1);
+
+    const savedBody = await readFile(path.join(responseDir, savedEntries[0] ?? ""), "utf8");
     assert.equal(savedBody, largeBody);
   });
 });
@@ -324,20 +371,283 @@ test("api_request cleans up older auto-spilled response files without deleting n
       outputFilePath: "users/user-7/data/api-responses/pinned.json"
     }, {});
 
-    const first = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
-    await utimes(path.join(tempDir, first.bodyFilePath), new Date("2026-05-01T00:00:00.000Z"), new Date("2026-05-01T00:00:00.000Z"));
+    await tool?.execute?.({ method: "GET", path: "/notes" }, {});
+    const responseDir = path.join(tempDir, "users/user-7/data/api-responses");
+    const firstEntries = await readdir(responseDir);
+    assert.equal(firstEntries.length, 2);
+    const firstAutoFile = firstEntries.find((entry) => entry !== "pinned.json");
+    assert.ok(firstAutoFile);
+    await utimes(path.join(responseDir, firstAutoFile), new Date("2026-05-01T00:00:00.000Z"), new Date("2026-05-01T00:00:00.000Z"));
 
-    const second = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
-    await utimes(path.join(tempDir, second.bodyFilePath), new Date("2026-05-02T00:00:00.000Z"), new Date("2026-05-02T00:00:00.000Z"));
+    await tool?.execute?.({ method: "GET", path: "/notes" }, {});
+    const secondEntries = await readdir(responseDir);
+    const secondAutoFiles = secondEntries.filter((entry) => entry !== "pinned.json").sort();
+    assert.equal(secondAutoFiles.length, 2);
+    const secondAutoFile = secondAutoFiles.find((entry) => entry !== firstAutoFile);
+    assert.ok(secondAutoFile);
+    await utimes(path.join(responseDir, secondAutoFile), new Date("2026-05-02T00:00:00.000Z"), new Date("2026-05-02T00:00:00.000Z"));
 
-    const third = await tool?.execute?.({ method: "GET", path: "/notes" }, {}) as { bodyFilePath: string };
+    await tool?.execute?.({ method: "GET", path: "/notes" }, {});
+    const thirdEntries = await readdir(responseDir);
+    const remainingAutoFiles = thirdEntries.filter((entry) => entry !== "pinned.json");
+    assert.equal(remainingAutoFiles.length, 2);
 
     await assert.rejects(
-      async () => await access(path.join(tempDir, first.bodyFilePath)),
+      async () => await access(path.join(responseDir, firstAutoFile)),
       /ENOENT/
     );
-    await access(path.join(tempDir, second.bodyFilePath));
-    await access(path.join(tempDir, third.bodyFilePath));
-    await access(path.join(tempDir, "users/user-7/data/api-responses/pinned.json"));
+    await access(path.join(responseDir, secondAutoFile));
+    for (const autoFile of remainingAutoFiles) {
+      await access(path.join(responseDir, autoFile));
+    }
+    await access(path.join(responseDir, "pinned.json"));
+  });
+});
+
+test("api_request reuses cached GET responses within cacheTtlMs", async () => {
+  await withTempDir(async (tempDir) => {
+    let fetchCount = 0;
+    const tool = createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      },
+      workspaceRoot: tempDir,
+      userId: "user-7",
+      fetchImpl: async () => {
+        fetchCount += 1;
+        return new Response(JSON.stringify({ fetchCount }), {
+          status: 200,
+          statusText: "OK",
+          headers: {
+            "content-type": "application/json"
+          }
+        });
+      }
+    });
+
+    const first = await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 60_000
+    }, {});
+
+    const second = await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 60_000
+    }, {});
+
+    assert.equal(fetchCount, 1);
+    assert.deepEqual(first, {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      url: "https://api.example.test/v1/notes",
+      headers: {
+        "content-type": "application/json"
+      },
+      cached: false,
+      body: {
+        fetchCount: 1
+      }
+    });
+    assert.deepEqual(second, {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      url: "https://api.example.test/v1/notes",
+      headers: {
+        "content-type": "application/json"
+      },
+      cached: true,
+      body: {
+        fetchCount: 1
+      }
+    });
+  });
+});
+
+test("api_request bypasses and refreshes cached GET responses when requested", async () => {
+  await withTempDir(async (tempDir) => {
+    let fetchCount = 0;
+    const tool = createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      },
+      workspaceRoot: tempDir,
+      userId: "user-7",
+      fetchImpl: async () => {
+        fetchCount += 1;
+        return new Response(JSON.stringify({ fetchCount }), {
+          status: 200,
+          statusText: "OK",
+          headers: {
+            "content-type": "application/json"
+          }
+        });
+      }
+    });
+
+    await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 60_000
+    }, {});
+
+    const refreshed = await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 60_000,
+      bypassCache: true
+    }, {});
+
+    const reused = await tool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 60_000
+    }, {});
+
+    assert.equal(fetchCount, 2);
+    assert.deepEqual(refreshed, {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      url: "https://api.example.test/v1/notes",
+      headers: {
+        "content-type": "application/json"
+      },
+      cached: false,
+      body: {
+        fetchCount: 2
+      }
+    });
+    assert.deepEqual(reused, {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      url: "https://api.example.test/v1/notes",
+      headers: {
+        "content-type": "application/json"
+      },
+      cached: true,
+      body: {
+        fetchCount: 2
+      }
+    });
+  });
+});
+
+test("api_request refetches GET responses after cache expiry", async () => {
+  await withTempDir(async (tempDir) => {
+    const originalNow = Date.now;
+    let now = 1_000;
+    let fetchCount = 0;
+
+    Date.now = () => now;
+
+    try {
+      const tool = createApiRequestTool({
+        envSource: {
+          API_BASE_URL: "https://api.example.test/v1"
+        },
+        workspaceRoot: tempDir,
+        userId: "user-7",
+        fetchImpl: async () => {
+          fetchCount += 1;
+          return new Response(JSON.stringify({ fetchCount }), {
+            status: 200,
+            statusText: "OK",
+            headers: {
+              "content-type": "application/json"
+            }
+          });
+        }
+      });
+
+      await tool?.execute?.({
+        method: "GET",
+        path: "/notes",
+        cacheTtlMs: 100
+      }, {});
+
+      now += 101;
+
+      const expired = await tool?.execute?.({
+        method: "GET",
+        path: "/notes",
+        cacheTtlMs: 100
+      }, {});
+
+      assert.equal(fetchCount, 2);
+      assert.deepEqual(expired, {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url: "https://api.example.test/v1/notes",
+        headers: {
+          "content-type": "application/json"
+        },
+        cached: false,
+        body: {
+          fetchCount: 2
+        }
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+});
+
+test("api_request rejects cache controls without GET or workspace storage", async () => {
+  const noWorkspaceTool = createApiRequestTool({
+    envSource: {
+      API_BASE_URL: "https://api.example.test/v1"
+    },
+    userId: "user-7",
+    fetchImpl: async () => new Response("ok", {
+      status: 200,
+      statusText: "OK"
+    })
+  });
+
+  await assert.rejects(
+    async () => await noWorkspaceTool?.execute?.({
+      method: "GET",
+      path: "/notes",
+      cacheTtlMs: 1_000
+    }, {}),
+    /api_request cacheTtlMs requires workspaceRoot to be configured/
+  );
+
+  await withTempDir(async (tempDir) => {
+    const tool = createApiRequestTool({
+      envSource: {
+        API_BASE_URL: "https://api.example.test/v1"
+      },
+      workspaceRoot: tempDir,
+      userId: "user-7",
+      fetchImpl: async () => new Response("ok", {
+        status: 200,
+        statusText: "OK"
+      })
+    });
+
+    await assert.rejects(
+      async () => await tool?.execute?.({
+        method: "POST",
+        path: "/notes",
+        cacheTtlMs: 1_000
+      }, {}),
+      /api_request cacheTtlMs is only supported for GET requests/
+    );
+
+    await assert.rejects(
+      async () => await tool?.execute?.({
+        method: "GET",
+        path: "/notes",
+        bypassCache: true
+      }, {}),
+      /api_request bypassCache requires cacheTtlMs/
+    );
   });
 });

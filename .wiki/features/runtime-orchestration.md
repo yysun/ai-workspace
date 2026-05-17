@@ -50,7 +50,7 @@ This layer also handles a few safety details for the host. It expands shell argu
 The runtime still relies on `llm-runtime` for the generic built-ins, but this host now adds three request-scoped tool surfaces of its own:
 
 - `workspace_read_file` is always present. It reads a full file from the mounted workspace, ignores legacy line-range arguments for compatibility, and caches repeated reads by real path and file version.
-- `api_request` is added only when the workspace `.env` exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, and can spill large response bodies into a user-scoped `api-responses` folder.
+- `api_request` is added only when the workspace `.env` exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, can spill large response bodies into a user-scoped `api-responses` folder, and can reuse successful `GET` responses from a user-scoped `api-cache` folder when the caller provides `cacheTtlMs`.
 - The AI workspace content tools described in [[workspace-tools-and-storage]] are always added. They sit on top of either the file provider or the SQL Server provider and are keyed by the resolved user id.
 
 ## Design Boundary
