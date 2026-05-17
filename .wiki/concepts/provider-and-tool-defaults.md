@@ -7,7 +7,8 @@ source_paths:
   - "src/config/env.ts"
   - "src/runtime/runtimeConfig.ts"
   - "src/routes/health.ts"
-updated_at: "2026-05-15"
+  - "src/storage/utils/config.ts"
+updated_at: "2026-05-17"
 ---
 
 # Provider And Tool Defaults
@@ -34,7 +35,19 @@ If the request omits a model or uses `default`, the host tries `LLM_MODEL` first
 
 - `LLM_PERMISSION` defaults to `auto`.
 - `LLM_REASONING` defaults to `medium`.
-- Built-in tool selection is currently `true`, which means the host enables all `llm-runtime` built-ins by default.
+- Built-in tool selection is explicit, not open-ended. The host enables `shell_cmd`, `ask_user_input`, `write_file`, `list_files`, `search_files`, `create_directory`, and `path_exists`, while disabling built-in `read_file`, `load_skill`, and `web_fetch`.
+
+On top of those built-ins, the host adds request-scoped tools:
+
+- `workspace_read_file` is always available for full workspace file reads.
+- `api_request` appears only when the workspace `.env` defines `API_BASE_URL`.
+- The AI workspace content tools described in [[workspace-tools-and-storage]] are always registered and are keyed by the resolved user id.
+
+For AI workspace storage, `AIW_STORAGE` defaults to `file`, `AIW_WORKSPACE_ID` defaults to `local`, and SQL Server mode requires `AIW_MSSQL_CONNECTION_STRING`.
+
+## User Identity Defaults
+
+The chat route does not take a standalone `AUTH_USER_URL` variable. Instead, `src/config/env.ts` derives the identity lookup URL from the host-level `API_BASE_URL` and `AUTH_USER_PATH`. If either part is missing, chat requests fail with `401` before the runtime starts.
 
 The `/health` response shows these resolved defaults so someone running the service can quickly confirm the current runtime settings.
 
@@ -42,4 +55,6 @@ The `/health` response shows these resolved defaults so someone running the serv
 
 - [[project-overview]]
 - [[runtime-orchestration]]
+- [[multi-user-workspace-routing]]
 - [[workspace-integration]]
+- [[workspace-tools-and-storage]]

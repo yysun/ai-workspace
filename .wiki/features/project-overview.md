@@ -13,16 +13,16 @@ source_paths:
   - ".env.example"
   - "tsconfig.json"
   - "tsconfig.e2e.json"
-updated_at: "2026-05-15"
+updated_at: "2026-05-17"
 ---
 
 # Project Overview
 
-`ai-workspace` is a small server that lets another app ask questions about one mounted workspace at a time. It takes a chat request, runs one model turn with that workspace's instructions and tools, and sends the result back. It does not keep long-lived chat history, user accounts, or session state between requests.
+`ai-workspace` is a small server that lets another app ask questions about one mounted workspace at a time. It takes a chat request, resolves which user it belongs to, runs one model turn with that workspace's instructions and tools, and sends the result back. It does not keep long-lived chat history or session state between requests.
 
 ## Why It Exists
 
-The server exists to be a thin bridge between a client and `llm-runtime`. A caller sends messages and optional model hints; the server fills in missing defaults, loads the workspace's extra instructions and local environment variables, then lets `llm-runtime` run the actual model, tools, and skills.
+The server exists to be a thin bridge between a client and `llm-runtime`. A caller sends messages, a Bearer token, and optional model hints; the server fills in missing defaults, resolves the user identity, loads the workspace's extra instructions and local environment variables, then lets `llm-runtime` run the actual model, tools, and skills.
 
 ## Main Build And Run Commands
 
@@ -37,11 +37,15 @@ The server exists to be a thin bridge between a client and `llm-runtime`. A call
 - `express` provides the HTTP server.
 - `llm-runtime` owns provider access, built-in tools, and workspace skill loading.
 - `dotenv` loads local development variables.
+- `mssql` backs the optional SQL Server content store for AI workspace data.
+- `zod` validates the host-owned AI workspace content tools.
 
 ## Operational Defaults
 
 - The default mounted workspace is `/workspace`.
 - The default local server port is `3000`.
+- Chat requests require a Bearer token and a configured identity lookup before they reach the runtime.
+- User-scoped files and generated API response bodies live under `users/<id>/...` inside the mounted workspace.
 - The host expects model-provider credentials through generic `LLM_*` settings and provider-specific environment variables documented in [[provider-and-tool-defaults]].
 
 ## Related Pages
@@ -49,4 +53,6 @@ The server exists to be a thin bridge between a client and `llm-runtime`. A call
 - [[http-server-and-routes]]
 - [[runtime-orchestration]]
 - [[workspace-integration]]
+- [[multi-user-workspace-routing]]
+- [[workspace-tools-and-storage]]
 - [[test-suite]]

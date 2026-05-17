@@ -7,7 +7,7 @@ source_paths:
   - "src/cli/testChatCli.ts"
   - "src/cli/streamingTestCli.ts"
   - "src/cli/toolTraceRenderer.ts"
-updated_at: "2026-05-15"
+updated_at: "2026-05-17"
 ---
 
 # Testing CLI
@@ -19,6 +19,7 @@ The local CLI is the easiest way to try repeated streaming chat requests from a 
 - Sends `stream: true` chat requests to `/chat/completions`.
 - Keeps conversation history in memory for the lifetime of the process.
 - Prints assistant text as streamed SSE chunks arrive.
+- Can auto-submit a bounded follow-up message such as `go ahead` after planning-style assistant replies when `--auto-continue` is enabled.
 - Supports `/clear` and `/exit` style interactive commands documented in the README.
 
 ## Trace Rendering
@@ -34,6 +35,8 @@ The renderer includes special handling for shell commands, file paths, and reada
 ## Human Input Handling
 
 The CLI also understands structured requests that pause and ask the human to choose an answer. It recognizes `ask_user_input`, `human_intervention_request`, and `ask_user_question`, renders numbered choices, supports comma-separated multiple selection, allows empty responses when a prompt is skippable, and turns the chosen answers back into a follow-up user message. See [[human-input-cli-turn]] for the flow details.
+
+The newer auto-continue path is intentionally cautious. It stays opt-in, only spends a small bounded turn budget, and allows a short grace window for warning-only stalls so narrated progress does not silently turn into an endless loop.
 
 ## Related Pages
 

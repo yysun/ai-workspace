@@ -8,8 +8,9 @@ source_paths:
   - "src/server.ts"
   - "src/routes/chatCompletions.ts"
   - "src/routes/health.ts"
+  - "src/auth/resolveUserId.ts"
   - "src/auth/verifyRequest.ts"
-updated_at: "2026-05-15"
+updated_at: "2026-05-17"
 ---
 
 # HTTP Server And Routes
@@ -24,19 +25,21 @@ This page covers the small web layer at the front of the product. Its job is to 
 
 ## Request Handling Details
 
-`src/server.ts` keeps the server setup intentionally simple. It disables `x-powered-by`, enables JSON parsing with a `1mb` limit, and runs a placeholder `verifyRequest` middleware. That middleware currently allows every request through, so there is no real auth gate yet.
+`src/server.ts` keeps the server setup intentionally simple. It disables `x-powered-by`, enables JSON parsing with a `1mb` limit, and still runs a placeholder `verifyRequest` middleware before the route handlers.
 
-The shared error handler logs enough detail to debug bad requests, including method, path, content type, and a shortened body preview for malformed JSON. It avoids logging full chat payloads for runtime `5xx` failures.
+The real chat gate now lives inside `src/routes/chatCompletions.ts`. That handler requires `Authorization: Bearer <token>`, rejects requests when the identity lookup URL is not configured, and resolves the user id before starting the runtime. The shared error handler still logs enough detail to debug bad requests, including method, path, content type, and a shortened body preview for malformed JSON. It avoids logging full chat payloads for runtime `5xx` failures.
 
 ## Chat Endpoint Responsibilities
 
-The chat route first makes sure the body looks like a real chat request. In practice that means `messages` must be a non-empty array of objects with string `role` and `content` fields. It also accepts optional `model`, `stream`, `temperature`, `max_tokens`, `tools`, `tool_choice`, and `metadata` fields.
+Before it validates the chat body, the route extracts the Bearer token, calls [[multi-user-workspace-routing]] to resolve a user id, and creates the user-scoped directory under `users/<id>`. It then makes sure the body looks like a real chat request. In practice that means `messages` must be a non-empty array of objects with string `role` and `content` fields. It also accepts optional `model`, `stream`, `temperature`, `max_tokens`, `tools`, `tool_choice`, and `metadata` fields.
 
-From there it resolves the workspace root, wires request aborts into an `AbortController`, and delegates execution to [[runtime-orchestration]]. The same runtime event stream is used for both JSON and SSE modes.
+From there it resolves the shared workspace root, wires request aborts into an `AbortController`, and delegates execution to [[runtime-orchestration]]. The runtime input includes the shared workspace root, the resolved user id, and the incoming access token so host-owned tools can stay user-scoped without logging secrets. The same runtime event stream is used for both JSON and SSE modes.
 
 ## Related Pages
 
 - [[request-lifecycle]]
+- [[multi-user-workspace-routing]]
 - [[streaming-chat-turn]]
 - [[sse-streaming]]
+- [[workspace-tools-and-storage]]
 - [[test-suite]]

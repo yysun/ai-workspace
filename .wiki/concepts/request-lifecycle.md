@@ -9,7 +9,8 @@ source_paths:
   - "src/runtime/runtimeTypes.ts"
   - "src/sse/mapRuntimeEvent.ts"
   - "src/sse/writeSse.ts"
-updated_at: "2026-05-15"
+  - "src/auth/resolveUserId.ts"
+updated_at: "2026-05-17"
 ---
 
 # Request Lifecycle
@@ -18,11 +19,12 @@ The main idea in this repository is that normal JSON replies and streaming repli
 
 ## Lifecycle Steps
 
-1. The route validates the incoming JSON body.
-2. The route resolves the workspace root and abort wiring.
-3. [[runtime-orchestration]] builds runtime messages and starts `llm-runtime`.
-4. Runtime events are consumed one by one.
-5. The route either forwards them as SSE frames or aggregates them into one JSON completion response.
+1. The route extracts the Bearer token, resolves the user id, and creates the user-scoped `users/<id>` directory.
+2. The route validates the incoming JSON body.
+3. The route resolves the shared workspace root and abort wiring.
+4. [[runtime-orchestration]] applies the workspace `.env`, builds runtime messages, registers request-scoped tools, and starts `llm-runtime`.
+5. Runtime events are consumed one by one.
+6. The route either forwards them as SSE frames or aggregates them into one JSON completion response.
 
 ## Why This Matters
 
@@ -38,5 +40,6 @@ Because the server does not split streaming and non-stream logic early, most beh
 ## Related Pages
 
 - [[http-server-and-routes]]
+- [[multi-user-workspace-routing]]
 - [[streaming-chat-turn]]
 - [[sse-streaming]]

@@ -7,7 +7,11 @@ source_paths:
   - "src/runtime/runChatCompletion.ts"
   - "src/runtime/runtimeConfig.ts"
   - "src/runtime/runtimeTypes.ts"
-updated_at: "2026-05-15"
+  - "src/tools/readFileTool.ts"
+  - "src/tools/apiRequestTool.ts"
+  - "src/storage/providers/index.ts"
+  - "src/storage/tools/aiwTools.ts"
+updated_at: "2026-05-17"
 ---
 
 # Runtime Orchestration
@@ -17,9 +21,11 @@ This page explains the handoff from the web server into the model runner. In pla
 ## Main Responsibilities
 
 - Add the workspace `AGENTS.md` text to the server's default instructions.
+- Add runtime user context so the model knows which `users/<id>/...` tree belongs to the current caller.
 - Turn incoming chat messages into the format expected by `llm-runtime`.
 - Tell the runtime where to find workspace skills.
 - Decide which model provider and model name to use when the request leaves those choices open.
+- Register the host-owned tools that wrap workspace reads, API access, and AI workspace content storage.
 - Send the runtime's progress and final output back to the route layer.
 
 ## Event Contract
@@ -37,15 +43,24 @@ Some tool events also include a `toolCallId`, which is mainly used by the intera
 
 ## Safety And Compatibility Work
 
-This layer also handles a few safety details for the host. It expands shell argument placeholders like `$NAME` and `${NAME}` before a tool runs, but hides secret values when those tool results are shown in events. It also recognizes paused human-input tool results from `ask_user_input`, `human_intervention_request`, and the local compatibility alias `ask_user_question`.
+This layer also handles a few safety details for the host. It expands shell argument placeholders like `$NAME` and `${NAME}` before a tool runs, but hides secret values when those tool results are shown in events. It also recognizes paused human-input tool results from `ask_user_input`, `human_intervention_request`, and the local compatibility alias `ask_user_question`, and it closes any request-scoped storage provider once the turn ends.
+
+## Request-Owned Tools
+
+The runtime still relies on `llm-runtime` for the generic built-ins, but this host now adds three request-scoped tool surfaces of its own:
+
+- `workspace_read_file` is always present. It reads a full file from the mounted workspace, ignores legacy line-range arguments for compatibility, and caches repeated reads by real path and file version.
+- `api_request` is added only when the workspace `.env` exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, and can spill large response bodies into a user-scoped `api-responses` folder.
+- The AI workspace content tools described in [[workspace-tools-and-storage]] are always added. They sit on top of either the file provider or the SQL Server provider and are keyed by the resolved user id.
 
 ## Design Boundary
 
-The split of responsibilities is simple: the host owns request parsing and HTTP responses, while `llm-runtime` owns provider access, built-in tools, and skill loading. That boundary shows up again in [[request-lifecycle]] and [[provider-and-tool-defaults]].
+The split of responsibilities is still simple: the host owns request parsing, user scoping, extra tools, and HTTP responses, while `llm-runtime` owns provider access, the generic built-ins, and skill loading. That boundary shows up again in [[request-lifecycle]] and [[provider-and-tool-defaults]].
 
 ## Related Pages
 
 - [[workspace-integration]]
 - [[provider-and-tool-defaults]]
+- [[workspace-tools-and-storage]]
 - [[streaming-chat-turn]]
 - [[test-suite]]
