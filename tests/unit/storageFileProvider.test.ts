@@ -15,6 +15,23 @@ import {
   formatStorageTypeForLog,
   resolveStorageType
 } from "../../src/storage/utils/config.js";
+import type {
+  ContentSearchInput,
+  ContentSearchResult,
+  CreateContentInput,
+  CreateContentResult,
+  DeleteContentInput,
+  DeleteContentResult,
+  ListContentInput,
+  ListContentResult,
+  ReadContentInput,
+  ReadContentResult,
+  ResolveObjectInput,
+  ResolvedObject,
+  WorkspaceProvider,
+  WriteContentInput,
+  WriteContentResult
+} from "../../src/storage/types.js";
 
 async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -113,6 +130,111 @@ test("AIW file tools write, read, list, search, and delete content", async () =>
     assert.equal(missing?.ok, false);
     assert.equal(missing?.error?.code, "NOT_FOUND");
   });
+});
+
+test("AIW read tools support TTL cache, bypass, expiry, and write invalidation", async () => {
+  let now = 10_000;
+  let searchCalls = 0;
+  let readCalls = 0;
+
+  const provider: WorkspaceProvider = {
+    async searchContent(_input: ContentSearchInput): Promise<ContentSearchResult[]> {
+      searchCalls += 1;
+      return [{ path: `data/accounts/a123/search-${searchCalls}.md` }];
+    },
+    async listContent(_input: ListContentInput): Promise<ListContentResult[]> {
+      return [];
+    },
+    async readContent(input: ReadContentInput): Promise<ReadContentResult> {
+      readCalls += 1;
+      return {
+        path: input.path,
+        content: `content-${readCalls}`,
+        contentType: "text/plain",
+        contentEncoding: "utf8",
+        metadata: {},
+        updatedAt: null
+      };
+    },
+    async writeContent(_input: WriteContentInput): Promise<WriteContentResult> {
+      return {
+        path: "data/accounts/a123/memory.md",
+        created: false,
+        updatedAt: new Date(now).toISOString()
+      };
+    },
+    async createContent(_input: CreateContentInput): Promise<CreateContentResult> {
+      return {
+        path: "data/accounts/a123/memory.md",
+        created: true,
+        updatedAt: new Date(now).toISOString()
+      };
+    },
+    async deleteContent(_input: DeleteContentInput): Promise<DeleteContentResult> {
+      return {
+        path: "data/accounts/a123/memory.md",
+        deleted: true,
+        deletedAt: new Date(now).toISOString()
+      };
+    },
+    async resolveObject(_input: ResolveObjectInput): Promise<ResolvedObject[]> {
+      return [];
+    },
+    async doctor(): Promise<Record<string, unknown>> {
+      return { ok: true };
+    }
+  };
+
+  const tools = Object.fromEntries(
+    createAiwTools(provider, {
+      cacheNamespace: `test-cache-${Date.now()}`,
+      now: () => now
+    }).map((tool) => [tool.name, tool])
+  );
+
+  const firstSearch = expectOk<Array<{ path: string }>>(
+    await tools.search_content?.execute({ query: "quarterly", cacheTtlMs: 500 })
+  );
+  const cachedSearch = expectOk<Array<{ path: string }>>(
+    await tools.search_content?.execute({ query: "quarterly", cacheTtlMs: 500 })
+  );
+  assert.deepEqual(cachedSearch, firstSearch);
+  assert.equal(searchCalls, 1);
+
+  const bypassedSearch = expectOk<Array<{ path: string }>>(
+    await tools.search_content?.execute({ query: "quarterly", cacheTtlMs: 500, bypassCache: true })
+  );
+  assert.equal(bypassedSearch[0]?.path, "data/accounts/a123/search-2.md");
+  assert.equal(searchCalls, 2);
+
+  now += 501;
+  const expiredSearch = expectOk<Array<{ path: string }>>(
+    await tools.search_content?.execute({ query: "quarterly", cacheTtlMs: 500 })
+  );
+  assert.equal(expiredSearch[0]?.path, "data/accounts/a123/search-3.md");
+  assert.equal(searchCalls, 3);
+
+  const firstRead = expectOk<{ content: string }>(
+    await tools.read_content?.execute({ path: "data/accounts/a123/memory.md", cacheTtlMs: 500 })
+  );
+  const cachedRead = expectOk<{ content: string }>(
+    await tools.read_content?.execute({ path: "data/accounts/a123/memory.md", cacheTtlMs: 500 })
+  );
+  assert.equal(firstRead.content, "content-1");
+  assert.equal(cachedRead.content, "content-1");
+  assert.equal(readCalls, 1);
+
+  const write = await tools.write_content?.execute({
+    path: "data/accounts/a123/memory.md",
+    content: "updated"
+  });
+  assert.equal(write?.ok, true);
+
+  const refreshedRead = expectOk<{ content: string }>(
+    await tools.read_content?.execute({ path: "data/accounts/a123/memory.md", cacheTtlMs: 500 })
+  );
+  assert.equal(refreshedRead.content, "content-2");
+  assert.equal(readCalls, 2);
 });
 
 test("AIW file provider rejects writes through symlinked directories outside the workspace", async () => {

@@ -20,6 +20,7 @@ import {
   buildRuntimeMessages,
   createBuiltInSelection,
   createEnvironmentOptions,
+  resolveMaxIterations,
   resolveMaxTokens,
   resolveTemperature,
   resolveRuntimeTarget
@@ -36,6 +37,7 @@ type RuntimeState = {
 };
 
 const REJECTED_TEXT_RETRY_LIMIT = 2;
+const DEFAULT_MAX_ITERATIONS = 24;
 const DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS = 24;
 const DEFAULT_MAX_WALL_TIME_MS = 15 * 60 * 1000;
 
@@ -262,7 +264,7 @@ export function createRequestTools(
 ): LLMToolDefinition[] {
   const scopedUserId = requireUserId(userId);
   const requestWorkspaceRoot = resolveWorkspaceRoot(workspaceRoot);
-  const storageEnvSource = {
+  const storageEnvSource: NodeJS.ProcessEnv = {
     ...envSource,
     WORKSPACE_ROOT: requestWorkspaceRoot
   };
@@ -276,7 +278,9 @@ export function createRequestTools(
     envSource: storageEnvSource,
     userId: scopedUserId
   });
-  tools.push(...createAiwTools(provider));
+  tools.push(...createAiwTools(provider, {
+    cacheNamespace: `${storageEnvSource.AIW_STORAGE ?? "file"}:${requestWorkspaceRoot}:${scopedUserId}`
+  }));
   if (provider.close) {
     registerCloser(() => provider.close?.() ?? Promise.resolve());
   }
@@ -322,6 +326,7 @@ export async function* runChatCompletion(
     const extraTools = createRequestTools(input.workspaceRoot, requestEnv, input.userId, (close) => {
       toolClosers.push(close);
     });
+    const maxIterations = resolveMaxIterations(env) ?? DEFAULT_MAX_ITERATIONS;
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -331,6 +336,7 @@ export async function* runChatCompletion(
       }),
       temperature: resolveTemperature(input, env),
       maxTokens: resolveMaxTokens(input, env),
+      maxIterations,
       maxConsecutiveToolTurns: env.llmMaxConsecutiveToolTurns ?? DEFAULT_MAX_CONSECUTIVE_TOOL_TURNS,
       maxWallTimeMs: env.llmMaxWallTimeMs ?? DEFAULT_MAX_WALL_TIME_MS,
       builtIns,

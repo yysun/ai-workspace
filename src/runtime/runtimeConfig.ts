@@ -187,6 +187,10 @@ export function resolveMaxTokens(input: RunChatCompletionInput, env: EnvConfig):
   return input.maxTokens ?? env.llmMaxToken;
 }
 
+export function resolveMaxIterations(env: EnvConfig): number | undefined {
+  return env.llmMaxIterations ?? env.llmMaxConsecutiveToolTurns;
+}
+
 export function resolveTemperature(input: RunChatCompletionInput, env: EnvConfig): number | undefined {
   return input.temperature ?? env.llmTemperature;
 }

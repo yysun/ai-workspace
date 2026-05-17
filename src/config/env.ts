@@ -13,6 +13,7 @@ export type EnvConfig = {
   llmProvider?: LLMProviderName;
   llmModel?: string;
   llmMaxToken?: number;
+  llmMaxIterations?: number;
   llmMaxConsecutiveToolTurns?: number;
   llmMaxWallTimeMs?: number;
   llmTemperature?: number;
@@ -98,6 +99,7 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
     llmProvider: parseOptionalProvider(source.LLM_PROVIDER),
     llmModel: source.LLM_MODEL?.trim() || undefined,
     llmMaxToken: parseOptionalPositiveInteger(source.LLM_MAXTOKEN),
+    llmMaxIterations: parseOptionalPositiveInteger(source.LLM_MAX_ITERATIONS ?? source.MAX_ITERATIONS),
     llmMaxConsecutiveToolTurns: parseOptionalPositiveInteger(source.LLM_MAX_CONSECUTIVE_TOOL_TURNS),
     llmMaxWallTimeMs: parseOptionalPositiveInteger(source.LLM_MAX_WALL_TIME_MS),
     llmTemperature: parseOptionalNumber(source.LLM_TEMPERATURE),

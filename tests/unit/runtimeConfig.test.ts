@@ -14,6 +14,7 @@ import {
   createEnvironmentOptions,
   createProviderConfigs,
   describeRuntimeDefaults,
+  resolveMaxIterations,
   resolveMaxTokens,
   resolveRuntimeTarget,
   resolveTemperature
@@ -149,6 +150,19 @@ test("resolveMaxTokens and resolveTemperature fall back to generic env defaults"
   assert.equal(resolveTemperature(input, baseEnv), 0.2);
 });
 
+test("resolveMaxIterations prefers explicit iteration limits and falls back to tool-turn limits", () => {
+  assert.equal(resolveMaxIterations(baseEnv), undefined);
+  assert.equal(resolveMaxIterations({
+    ...baseEnv,
+    llmMaxConsecutiveToolTurns: 50
+  }), 50);
+  assert.equal(resolveMaxIterations({
+    ...baseEnv,
+    llmMaxIterations: 60,
+    llmMaxConsecutiveToolTurns: 50
+  }), 60);
+});
+
 test("createBuiltInSelection disables load_skill", () => {
   const selection = createBuiltInSelection();
   const normalized = normalizeBuiltInToolSelection(selection);
@@ -199,4 +213,18 @@ test("loadEnv parses LLM_MAX_WALL_TIME_MS as a positive integer override", () =>
   });
 
   assert.equal(env.llmMaxWallTimeMs, 900000);
+});
+
+test("loadEnv parses LLM_MAX_ITERATIONS and MAX_ITERATIONS aliases", () => {
+  assert.equal(loadEnv({
+    PORT: "3000",
+    WORKSPACE_ROOT: "/workspace",
+    LLM_MAX_ITERATIONS: "50"
+  }).llmMaxIterations, 50);
+
+  assert.equal(loadEnv({
+    PORT: "3000",
+    WORKSPACE_ROOT: "/workspace",
+    MAX_ITERATIONS: "60"
+  }).llmMaxIterations, 60);
 });
