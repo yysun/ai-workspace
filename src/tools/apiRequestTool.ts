@@ -1,14 +1,14 @@
 /*
  * Feature: workspace-configured outbound API tool for llm-runtime requests.
  * Notes: constrains calls to a configured base URL and applies host-owned auth headers from workspace env.
- * Recent changes: supports opt-in GET response caching in process memory while keeping file-backed response persistence constrained to tool-owned api-responses directories.
+ * Recent changes: supports opt-in GET response caching in process memory while keeping file-backed response persistence constrained to the current user's workspace directory.
  */
 
 import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
 import { createHash } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveApiResponseDirectory, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
+import { resolveUserWorkspaceRoot, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const API_TOOL_NAME = "api_request";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
@@ -274,7 +274,7 @@ async function resolveWorkspaceOutputPath(
     throw new Error("api_request outputFilePath must be relative to the workspace root");
   }
 
-  const allowedRootPath = resolveApiResponseDirectory(workspaceRoot, userId);
+  const allowedRootPath = resolveUserWorkspaceRoot(workspaceRoot, userId);
   const workspaceRelativeCandidatePath = path.resolve(workspaceRoot, requestedPath);
   const candidatePath = isPathInside(allowedRootPath, workspaceRelativeCandidatePath)
     ? workspaceRelativeCandidatePath
@@ -643,7 +643,7 @@ export function createApiRequestTool(options: {
         },
         outputFilePath: {
           type: "string",
-          description: "Optional nested relative path under the tool-owned api-responses directory, or a workspace-relative path inside that directory, where the raw response body should be saved instead of returned inline. Large responses are saved automatically when this is omitted."
+          description: "Optional nested relative path under the current user's workspace directory, or a workspace-relative path inside that directory, where the raw response body should be saved instead of returned inline. Large responses are saved automatically when this is omitted."
         },
         cacheTtlMs: {
           type: "number",

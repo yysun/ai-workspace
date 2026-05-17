@@ -157,7 +157,7 @@ test("api_request saves the raw response body to outputFilePath when requested",
   });
 });
 
-test("api_request accepts outputFilePath relative to the user api-responses directory", async () => {
+test("api_request accepts outputFilePath relative to the user workspace directory", async () => {
   await withTempDir(async (tempDir) => {
     const tool = createApiRequestTool({
       envSource: {
@@ -177,7 +177,7 @@ test("api_request accepts outputFilePath relative to the user api-responses dire
     const result = await tool?.execute?.({
       method: "GET",
       path: "/notes",
-      outputFilePath: "api/data/users/me/notes.json"
+      outputFilePath: "scratch/api/data/users/me/notes.json"
     }, {});
 
     assert.deepEqual(result, {
@@ -189,11 +189,11 @@ test("api_request accepts outputFilePath relative to the user api-responses dire
         "content-type": "application/json"
       },
       bodySaved: true,
-      bodyFilePath: "users/3/data/api-responses/api/data/users/me/notes.json",
+      bodyFilePath: "users/3/scratch/api/data/users/me/notes.json",
       bodyBytes: Buffer.byteLength(JSON.stringify({ huge: true, note: "saved" }), "utf8")
     });
 
-    const savedBody = await readFile(path.join(tempDir, "users/3/data/api-responses/api/data/users/me/notes.json"), "utf8");
+    const savedBody = await readFile(path.join(tempDir, "users/3/scratch/api/data/users/me/notes.json"), "utf8");
     assert.equal(savedBody, JSON.stringify({ huge: true, note: "saved" }));
   });
 });
@@ -256,7 +256,7 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
           path: "/notes",
           outputFilePath: "linked-output/notes.json"
         }, {}),
-        /api_request outputFilePath must stay within users\/user-7\/data\/api-responses/
+        /api_request outputFilePath must stay within users\/user-7/
       );
     } finally {
       await rm(outsideDir, { recursive: true, force: true });
@@ -264,7 +264,7 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
   });
 });
 
-test("api_request rejects outputFilePath outside the tool-owned api-responses directory", async () => {
+test("api_request rejects outputFilePath outside the current user's workspace directory", async () => {
   await withTempDir(async (tempDir) => {
     const tool = createApiRequestTool({
       envSource: {
@@ -287,7 +287,7 @@ test("api_request rejects outputFilePath outside the tool-owned api-responses di
         path: "/notes",
         outputFilePath: "AGENTS.md"
       }, {}),
-      /api_request outputFilePath must stay within users\/user-7\/data\/api-responses/
+      /api_request outputFilePath must stay within users\/user-7/
     );
   });
 });
