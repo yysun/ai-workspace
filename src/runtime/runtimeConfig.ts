@@ -1,10 +1,9 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
- * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended AGENTS.md content.
+ * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
  * Recent changes: delegates built-in tool selection to llm-runtime and uses generic LLM_* runtime defaults.
  */
 
-import path from "node:path";
 import type {
   BuiltInToolSelection,
   LLMChatMessage,
@@ -25,7 +24,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Prefer workspace evidence over speculation whenever the answer depends on files, configuration, environment variables, logs, generated outputs, or repository state.",
   "For read-only tasks such as inspecting, searching, summarizing, and analyzing workspace content, proceed without asking for confirmation.",
   "Use available read-only tools before asking the user for information that may already exist in the workspace.",
-  "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, inspect the workspace and use `load_skill` when an appropriate skill is available.",
+  "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from AGENTS.md.",
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
   "If an external API or network lookup is required, use an available tool instead of narrating intent.",
   "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host.",
@@ -130,15 +129,9 @@ export function createProviderConfigs(env: EnvConfig): LLMProviderConfigs {
   };
 }
 
-// import.meta.dirname = dist/runtime/ (prod) or src/runtime/ (dev); two levels up = package root
-const PACKAGE_ROOT = path.resolve(import.meta.dirname, "../..");
-
 export function createEnvironmentOptions(env: EnvConfig, workspaceRoot: string): LLMEnvironmentOptions {
   return {
     providers: createProviderConfigs(env),
-    skillRoots: [
-      path.join(PACKAGE_ROOT, "skills")
-    ],
     defaults: {
       reasoningEffort: env.llmReasoning,
       toolPermission: env.llmPermission
@@ -174,7 +167,7 @@ export function createBuiltInSelection(): BuiltInToolSelection {
   return {
     shell_cmd: true,
     web_fetch: false,
-    load_skill: true,
+    load_skill: false,
     ask_user_input: true,
     read_file: true,
     write_file: true,
@@ -211,12 +204,14 @@ export function describeRuntimeDefaults(env: EnvConfig): {
   };
 }
 
-export function composeSystemPrompt(agentsMd: string | null): string {
-  if (!agentsMd?.trim()) {
-    return DEFAULT_SYSTEM_PROMPT;
+export function composeSystemPrompt(agentsMd: string | null | undefined): string {
+  const sections = [DEFAULT_SYSTEM_PROMPT];
+
+  if (agentsMd?.trim()) {
+    sections.push(`Additional workspace instructions:\n${agentsMd.trim()}`);
   }
 
-  return `${DEFAULT_SYSTEM_PROMPT}\n\nAdditional workspace instructions:\n${agentsMd.trim()}`;
+  return sections.join("\n\n");
 }
 
 function toLlmMessages(messages: ChatMessage[]): LLMChatMessage[] {

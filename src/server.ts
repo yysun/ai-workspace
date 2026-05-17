@@ -10,6 +10,8 @@ import { createHealthHandler } from "./routes/health.js";
 import { createChatCompletionsHandler } from "./routes/chatCompletions.js";
 import { verifyRequest } from "./auth/verifyRequest.js";
 import type { EnvConfig } from "./config/env.js";
+import { loadAgentsMdCache } from "./workspace/loadAgentsMd.js";
+import { resolveWorkspaceRoot } from "./workspace/resolveWorkspace.js";
 
 const BODY_PREVIEW_LIMIT = 800;
 
@@ -70,7 +72,12 @@ function logRequestError(req: Request, error: unknown, statusCode: number): void
 
 export function createServer(env: EnvConfig): Express {
   const app = express();
-  const chatHandler = createChatCompletionsHandler(env);
+  const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
+  const agentsMdCachePromise = loadAgentsMdCache(workspaceRoot).then((loaded) => {
+    console.log(`[workspace] AGENTS.md path: ${loaded.path}${loaded.content === null ? " (missing)" : ""}`);
+    return loaded;
+  });
+  const chatHandler = createChatCompletionsHandler(env, agentsMdCachePromise);
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));

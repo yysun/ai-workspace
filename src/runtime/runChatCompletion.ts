@@ -1,6 +1,6 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
- * Notes: appends AGENTS.md to the server system prompt, delegates built-ins, skills, and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
+ * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
  * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken into requestEnv for multi-user support.
  */
 
@@ -12,7 +12,6 @@ import {
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import { createApiRequestTool } from "../tools/apiRequestTool.js";
-import { loadAgentsMd } from "../workspace/loadAgentsMd.js";
 import {
   buildRuntimeMessages,
   createBuiltInSelection,
@@ -256,6 +255,7 @@ export async function* runChatCompletion(
 ): AsyncIterable<RuntimeEvent> {
   let restoreWorkspaceEnv: () => void = () => undefined;
   let environment: LLMRuntime | undefined;
+  const workingDirectory = input.userDataRoot ?? input.workspaceRoot;
 
   try {
     const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
@@ -269,17 +269,12 @@ export async function* runChatCompletion(
       requestEnv.API_ACCESS_TOKEN = input.accessToken;
     }
 
-    const agentsMd = await loadAgentsMd(input.workspaceRoot);
+    const agentsMd = input.agentsMd ?? null;
     const builtIns = createBuiltInSelection();
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
     const apiRequestTool = createApiRequestTool({ envSource: requestEnv });
     const extraTools = apiRequestTool ? [apiRequestTool] : undefined;
-
-    const skills = await environment.skillRegistry.listSkills();
-    const skillRoots = environment.skillRegistry.getRoots();
-    // console.log(`[skills] roots: ${skillRoots.join(", ") || "(none)"}`);
-    console.log(`[skills] found: ${skills.map((s) => s.skillId).join(", ") || "(none)"}`);
 
     for await (const event of environment.streamComplete({
       provider: runtimeTarget.provider,
@@ -294,7 +289,7 @@ export async function* runChatCompletion(
       defaultTextResponseMode: "require_tool_result",
       rejectedTextRetryLimit: REJECTED_TEXT_RETRY_LIMIT,
       context: {
-        workingDirectory: input.workspaceRoot,
+        workingDirectory,
         abortSignal: input.signal,
         toolPermission: environment.defaults.toolPermission,
         reasoningEffort: environment.defaults.reasoningEffort
@@ -333,6 +328,7 @@ export async function* runChatCompletion(
           safeParseToolArguments(event.toolCall.function.arguments),
           requestEnv
         );
+
         yield {
           type: "tool.call",
           name: event.toolCall.function.name,
@@ -347,6 +343,7 @@ export async function* runChatCompletion(
           safeParseToolArguments(event.toolCall.function.arguments),
           requestEnv
         );
+
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,
@@ -362,6 +359,7 @@ export async function* runChatCompletion(
           safeParseToolArguments(event.toolCall.function.arguments),
           requestEnv
         );
+
         yield {
           type: "tool.result",
           name: event.toolCall.function.name,

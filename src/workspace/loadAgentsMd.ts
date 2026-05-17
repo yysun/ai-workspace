@@ -1,20 +1,49 @@
 /*
- * Feature: AGENTS.md loader for per-request workspace instruction enrichment.
- * Notes: returns null when the instruction file is absent so callers can stay tolerant.
- * Recent changes: restored the workspace instruction loader after the runtime refactor.
+ * Feature: AGENTS.md loader for workspace instruction enrichment.
+ * Notes: supports one-time startup loading and tolerant missing-file behavior.
+ * Recent changes: added startup cache metadata so the server can log the resolved AGENTS.md path once and reuse the content for chat requests.
  */
 
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-export async function loadAgentsMd(workspaceRoot: string): Promise<string | null> {
-  const agentsPath = path.join(workspaceRoot, "AGENTS.md");
+export type LoadedAgentsMd = {
+  path: string;
+  content: string | null;
+};
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
+export function resolveAgentsMdPath(workspaceRoot: string): string {
+  return path.join(workspaceRoot, "AGENTS.md");
+}
+
+export async function loadAgentsMdCache(workspaceRoot: string): Promise<LoadedAgentsMd> {
+  const agentsPath = resolveAgentsMdPath(workspaceRoot);
 
   try {
-    await access(agentsPath);
-  } catch {
-    return null;
-  }
+    return {
+      path: agentsPath,
+      content: await readFile(agentsPath, "utf8")
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        path: agentsPath,
+        content: null
+      };
+    }
 
-  return readFile(agentsPath, "utf8");
+    throw error;
+  }
+}
+
+export async function loadAgentsMd(workspaceRoot: string): Promise<string | null> {
+  const loaded = await loadAgentsMdCache(workspaceRoot);
+  return loaded.content;
 }

@@ -8,9 +8,16 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { buildRuntimeMessages } from "../../src/runtime/runtimeConfig.js";
-import { loadAgentsMd } from "../../src/workspace/loadAgentsMd.js";
+import { loadAgentsMd, loadAgentsMdCache } from "../../src/workspace/loadAgentsMd.js";
 
 const workspaceRoot = fileURLToPath(new URL("../fixtures/workspace", import.meta.url));
+
+test("loadAgentsMdCache returns the resolved AGENTS.md path and cached content", async () => {
+  const loaded = await loadAgentsMdCache(workspaceRoot);
+
+  assert.equal(loaded.path, `${workspaceRoot}/AGENTS.md`);
+  assert.equal(loaded.content, "Prefer concise answers.\n");
+});
 
 test("loadAgentsMd reads workspace AGENTS.md into the runtime system prompt", async () => {
   const agentsMd = await loadAgentsMd(workspaceRoot);

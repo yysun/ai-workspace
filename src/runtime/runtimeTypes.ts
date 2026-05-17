@@ -35,6 +35,8 @@ export type RunChatCompletionInput = {
   maxTokens?: number;
   metadata?: Record<string, unknown>;
   workspaceRoot: string;
+  userDataRoot?: string;
+  agentsMd?: string | null;
   accessToken?: string;
   signal?: AbortSignal;
 };

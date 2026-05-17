@@ -134,21 +134,24 @@ test("resolveMaxTokens and resolveTemperature fall back to generic env defaults"
   assert.equal(resolveTemperature(input, baseEnv), 0.2);
 });
 
-test("createBuiltInSelection enables all llm-runtime built-ins", () => {
+test("createBuiltInSelection disables load_skill", () => {
   const selection = createBuiltInSelection();
   const normalized = normalizeBuiltInToolSelection(selection);
+  const disabledTools = new Set(["load_skill", "web_fetch"]);
 
-  assert.equal(selection, true);
   for (const toolName of BUILT_IN_TOOL_NAMES) {
-    assert.equal(normalized[toolName], true);
+    assert.equal(normalized[toolName], !disabledTools.has(toolName));
   }
 });
 
-test("createEnvironmentOptions loads skills from package root", () => {
+test("createEnvironmentOptions only configures provider defaults", () => {
   const options = createEnvironmentOptions(baseEnv, "/workspace");
 
-  assert.equal(options.skillRoots?.length, 1);
-  assert.ok(options.skillRoots?.[0].endsWith("/skills"));
+  assert.equal(options.skillRoots, undefined);
+  assert.deepEqual(options.defaults, {
+    reasoningEffort: baseEnv.llmReasoning,
+    toolPermission: baseEnv.llmPermission
+  });
 });
 
 test("createProviderConfigs includes openai-compatible configuration", () => {

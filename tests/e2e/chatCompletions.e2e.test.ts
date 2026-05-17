@@ -7,14 +7,17 @@
 import assert from "node:assert/strict";
 import "dotenv/config";
 import { once } from "node:events";
+import { access, rm } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import test from "node:test";
 import { createServer as createApp } from "../../src/server.js";
 import type { EnvConfig } from "../../src/config/env.js";
 
 const TEST_TOKEN = "e2e-test-token";
 const TEST_USER_ID = "e2e-user";
+const TEST_WORKSPACE_ROOT = new URL("../fixtures/workspace", import.meta.url).pathname;
 
 async function startIdentityServer(): Promise<{ server: Server; url: string }> {
   return new Promise((resolve, reject) => {
@@ -49,7 +52,7 @@ async function startServer(): Promise<{ server: Server; identityServer: Server; 
   const { server: identityServer, url: authUserUrl } = await startIdentityServer();
   const env: EnvConfig = {
     port: 0,
-    workspaceRoot: new URL("../fixtures/workspace", import.meta.url).pathname,
+    workspaceRoot: TEST_WORKSPACE_ROOT,
     llmPermission: "auto",
     llmReasoning: "medium",
     authUserUrl
@@ -90,8 +93,11 @@ async function withCapturedConsoleError<T>(run: (loggedErrors: LoggedError[]) =>
 
 test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid non-stream request", async () => {
   const { server, identityServer, baseUrl } = await startServer();
+  const userDataRoot = path.join(TEST_WORKSPACE_ROOT, "users", TEST_USER_ID);
 
   try {
+    await rm(userDataRoot, { recursive: true, force: true });
+
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -115,6 +121,7 @@ test("POST /chat/completions returns a runtime 5xx instead of 400 for a valid no
     assert.equal(response.status, 500);
     assert.equal(typeof payload.error, "string");
     assert.match(String(payload.error), /No configuration found for openai provider/i);
+    await access(userDataRoot);
   } finally {
     await closeServer(server);
     await closeServer(identityServer);

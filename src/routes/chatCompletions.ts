@@ -5,6 +5,7 @@
  */
 
 import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import type { RequestHandler, Request } from "express";
 import type { EnvConfig } from "../config/env.js";
 import { resolveUserId, UserIdResolutionError } from "../auth/resolveUserId.js";
@@ -12,9 +13,17 @@ import { runChatCompletion } from "../runtime/runChatCompletion.js";
 import type { ChatCompletionRequest, ChatMessage, RuntimeEvent } from "../runtime/runtimeTypes.js";
 import { mapRuntimeEvent } from "../sse/mapRuntimeEvent.js";
 import { writeSseHeaders, writeSseEvent, writeSseDone } from "../sse/writeSse.js";
+import type { LoadedAgentsMd } from "../workspace/loadAgentsMd.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
 
 type HttpError = Error & { statusCode?: number };
+
+function isNotDirectoryError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "ENOTDIR";
+}
 
 function createHttpError(message: string, statusCode: number): HttpError {
   const error = new Error(message) as HttpError;
@@ -128,7 +137,7 @@ function aggregateResponse(model: string, events: RuntimeEvent[]) {
   };
 }
 
-export function createChatCompletionsHandler(env: EnvConfig): RequestHandler {
+export function createChatCompletionsHandler(env: EnvConfig, agentsMdCachePromise: Promise<LoadedAgentsMd>): RequestHandler {
   return async (req, res, next) => {
     try {
       const token = extractBearerToken(req);
@@ -154,12 +163,20 @@ export function createChatCompletionsHandler(env: EnvConfig): RequestHandler {
       }
 
       const chatRequest = parseRequestBody(req.body);
+      const agentsMdCache = await agentsMdCachePromise;
       const abortController = new AbortController();
       const sanitizedUserId = userId.replace(/[/\\.\0]/g, "_");
-      const workspaceRoot = `${resolveWorkspaceRoot(env.workspaceRoot)}/${sanitizedUserId}`;
+      const workspaceRoot = resolveWorkspaceRoot(env.workspaceRoot);
+      const userDataRoot = path.join(workspaceRoot, "users", sanitizedUserId);
 
-      console.log(`[chat] userId=${userId} workspaceRoot=${workspaceRoot}`);
-      await mkdir(workspaceRoot, { recursive: true });
+      console.log(`[chat] userId=${userId} workspaceRoot=${workspaceRoot} userDataRoot=${userDataRoot}`);
+      try {
+        await mkdir(userDataRoot, { recursive: true });
+      } catch (error) {
+        if (!isNotDirectoryError(error)) {
+          throw error;
+        }
+      }
 
       req.on("aborted", () => {
         abortController.abort();
@@ -179,6 +196,8 @@ export function createChatCompletionsHandler(env: EnvConfig): RequestHandler {
         maxTokens: chatRequest.max_tokens,
         metadata: chatRequest.metadata,
         workspaceRoot,
+        userDataRoot,
+        agentsMd: agentsMdCache.content,
         accessToken: token,
         signal: abortController.signal
       };
