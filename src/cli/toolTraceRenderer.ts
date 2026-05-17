@@ -481,6 +481,26 @@ function summarizeCreateDirectoryResult(result: unknown, forcedDurationMs?: numb
   };
 }
 
+function summarizeApiRequestResult(result: unknown, forcedDurationMs?: number): ToolResultView {
+  const record = parseJsonRecord(result);
+  const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
+  const ok = inferOk(record, true);
+  const bodySaved = readFirstBoolean(record, "bodySaved") === true;
+  const bodyFilePath = readFirstString(record, "bodyFilePath");
+
+  if (ok && bodySaved && bodyFilePath) {
+    return {
+      name: "api_request",
+      ok,
+      durationMs,
+      summary: `completed · saved to ${truncateOneLine(bodyFilePath, MAX_PREVIEW_LINE_WIDTH)}`,
+      raw: result
+    };
+  }
+
+  return summarizeGenericToolResult(result, "api_request", forcedDurationMs);
+}
+
 function summarizeGenericToolResult(result: unknown, toolName: string, forcedDurationMs?: number): ToolResultView {
   const record = parseJsonRecord(result);
   const durationMs = forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined;
@@ -636,6 +656,10 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
 
   if (toolName === "create_directory") {
     return summarizeCreateDirectoryResult(result, durationMs);
+  }
+
+  if (toolName === "api_request") {
+    return summarizeApiRequestResult(result, durationMs);
   }
 
   return summarizeGenericToolResult(result, toolName, durationMs);

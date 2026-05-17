@@ -530,6 +530,31 @@ test("formatToolResultEventLine suppresses create_directory metadata previews", 
   );
 });
 
+test("formatToolResultEventLine includes saved output paths for api_request", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "api_request",
+      JSON.stringify({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        url: "https://api.example.test/v1/notes",
+        bodySaved: true,
+        bodyFilePath: "users/user-7/data/api-responses/notes.json",
+        bodyBytes: 29
+      }),
+      "default",
+      undefined,
+      42
+    ),
+    [
+      "",
+      "  ✓ api_request 42ms · completed · saved to users/user-7/data/api-responses/notes.json",
+      ""
+    ].join("\n")
+  );
+});
+
 test("streamAssistantTurn writes tool results using returned payloads", async () => {
   const output = createWritableCapture();
   const errorOutput = createWritableCapture();
