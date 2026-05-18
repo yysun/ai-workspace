@@ -2,10 +2,10 @@
 
 ## Summary
 
-- Replaced the delegated built-in `read_file` path with a host-owned cached `workspace_read_file` tool registered during per-request runtime creation.
+- Replaced the delegated built-in `read_file` path with a host-owned cached workspace read tool registered during per-request runtime creation.
 - Added workspace-root boundary enforcement so `read_file` cannot escape the active request workspace, including symlink-aware realpath checks.
 - Added exact-read caching keyed by resolved absolute path, requested line range, and file version derived from file size and modification time.
-- Preserved the file-read contract around `filePath` / `startLine` / `endLine`, while using the non-reserved `workspace_read_file` name because llm-runtime reserves built-in names.
+- Preserved the file-read contract around `filePath` / `startLine` / `endLine`, while using a non-reserved custom tool name because llm-runtime reserves built-in names.
 - Kept other built-in tools unchanged and preserved optional `api_request` registration.
 - Added clearer error mapping for missing files, unreadable files, invalid ranges, and non-file targets.
 

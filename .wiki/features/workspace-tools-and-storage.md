@@ -5,7 +5,6 @@ status: "active"
 language: "default"
 source_paths:
   - "src/runtime/runChatCompletion.ts"
-  - "src/tools/readFileTool.ts"
   - "src/tools/apiRequestTool.ts"
   - "src/storage/providers/index.ts"
   - "src/storage/providers/fileProvider.ts"
@@ -14,9 +13,8 @@ source_paths:
   - "src/storage/utils/config.ts"
   - "src/storage/mssql/mssql-schema.sql"
   - "tests/unit/apiTool.test.ts"
-  - "tests/unit/readFileTool.test.ts"
   - "tests/unit/storageFileProvider.test.ts"
-updated_at: "2026-05-17"
+updated_at: "2026-05-18"
 ---
 
 # Workspace Tools And Storage
@@ -25,7 +23,7 @@ This page covers the host-owned tool layer that sits beside `llm-runtime`'s gene
 
 ## Host-Owned File And API Tools
 
-- `workspace_read_file` is the host replacement for the reserved built-in `read_file` name. It enforces workspace-root boundaries with `realpath`, returns the full file content, accepts legacy line-range arguments only for compatibility, and caches repeated reads by resolved path plus file version.
+- `marp_cli` renders user-scoped Markdown decks into supported output formats without exposing unrestricted shell access to the model.
 - `api_request` is optional and appears only when the workspace `.env` defines `API_BASE_URL`. It only accepts relative paths under that base URL, attaches host-owned auth and security-context headers, redacts sensitive headers in its result, can save response bodies to disk when the body is too large or when the caller requests an output path, and supports opt-in `GET` caching with `cacheTtlMs` plus `bypassCache`.
 
 Saved API bodies are tightly scoped. They must stay inside `users/<id>/data/api-responses`, and the tool checks real paths so symlinks cannot redirect writes outside the workspace.

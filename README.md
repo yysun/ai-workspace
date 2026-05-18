@@ -25,7 +25,7 @@ npm run build
 npm run dev
 ```
 
-The server optionally loads its local `.env` via `dotenv` for local development. Before each chat request it also loads `${WORKSPACE_ROOT}/.env` into `process.env` so workspace-scoped variables are available during runtime execution.
+The server optionally loads its local `.env` via `dotenv` for local development. Runtime configuration and host-owned tool registration come only from that server process environment; the mounted workspace `.env` is not read.
 
 Health check:
 
@@ -192,11 +192,10 @@ Per request, the server:
 
 - Workspace built-ins are provided by `llm-runtime`.
 - The server passes `WORKSPACE_ROOT` as the `workingDirectory` used for runtime tool execution.
-- The server also loads `${WORKSPACE_ROOT}/.env` before each runtime call so workspace-local variables are visible to runtime code.
 - All `llm-runtime` built-ins are enabled by default through the runtime's built-in selection contract.
 - `LLM_PERMISSION` is passed to `llm-runtime`; the server does not hide or narrow built-ins based on permission.
 
-When `${WORKSPACE_ROOT}/.env` defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, observable tool events redact configured secrets, and `GET` calls can opt into in-memory caching with `cacheTtlMs` and `bypassCache`.
+When the server environment defines `API_BASE_URL`, the runtime also exposes an `api_request` tool for relative-path API calls. The host applies `API_ACCESS_TOKEN` and optional security-context headers automatically, observable tool events redact configured secrets, and `GET` calls can opt into in-memory caching with `cacheTtlMs` and `bypassCache`.
 
 The runtime also exposes a host-owned `marp_cli` tool that renders Markdown slide decks already stored in the workspace into HTML, PDF, PPTX, or notes files under workspace-controlled output paths.
 
@@ -208,6 +207,7 @@ Supported variables:
 
 - `PORT`
 - `WORKSPACE_ROOT`
+- `AIW_STORAGE`
 - `LLM_PROVIDER`
 - `LLM_MODEL`
 - `LLM_MAXTOKEN`
@@ -223,14 +223,15 @@ Supported variables:
 - `ANTHROPIC_API_KEY`
 - `OPENAI_COMPATIBLE_API_KEY`
 - `OPENAI_COMPATIBLE_BASE_URL`
-- `API_BASE_URL` in `${WORKSPACE_ROOT}/.env` to enable the `api_request` tool
-- `API_ACCESS_TOKEN` in `${WORKSPACE_ROOT}/.env` for host-applied auth
-- `API_AUTH_SCHEME` in `${WORKSPACE_ROOT}/.env` to override the default `Bearer` auth scheme
-- `API_SECURITY_CONTEXT` in `${WORKSPACE_ROOT}/.env` for a host-applied security context value
-- `API_SECURITY_CONTEXT_HEADER` in `${WORKSPACE_ROOT}/.env` to override the default `X-Security-Context` header name
+- `API_BASE_URL`
+- `API_ACCESS_TOKEN`
+- `API_AUTH_SCHEME`
+- `API_SECURITY_CONTEXT`
+- `API_SECURITY_CONTEXT_HEADER`
 
 Runtime defaults:
 
+- `AIW_STORAGE` in the server root `.env` enables AIW-managed path protections when it is set to `file` or `mssql`, and also selects the backing storage provider.
 - `LLM_PROVIDER` sets the default provider when the request does not override it.
 - `LLM_MODEL` sets the default model when the request does not override it.
 - `LLM_MAXTOKEN` sets the default max-token limit when the request does not override it.
@@ -240,10 +241,9 @@ Runtime defaults:
 - Set `LLM_PROVIDER=azure` together with `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_RESOURCE_NAME`, and `AZURE_OPENAI_DEPLOYMENT_NAME` to use Azure OpenAI.
 - Set `LLM_PROVIDER=openai-compatible` together with `OPENAI_COMPATIBLE_API_KEY` and `OPENAI_COMPATIBLE_BASE_URL` to use an OpenAI-compatible endpoint.
 
-Workspace runtime variables:
+API runtime variables:
 
-- If `${WORKSPACE_ROOT}/.env` exists, it is loaded before each chat request.
-- This is intended for workspace-local variables such as `API_BASE_URL` and `API_ACCESS_TOKEN`.
+- The server reads API and auth settings only from its own process environment, such as the root `.env` used for local development.
 - When `API_BASE_URL` is present, the runtime registers `api_request` and constrains it to paths under that base URL.
 - `api_request` supports opt-in `GET` caching through `cacheTtlMs` and `bypassCache`; cache entries are stored under the user-scoped tool storage and refreshed on successful network responses.
 

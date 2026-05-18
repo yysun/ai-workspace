@@ -1,7 +1,7 @@
 /*
  * Feature: unit coverage for llm-runtime orchestration helpers.
  * Notes: verifies host-side helpers without calling a provider.
- * Recent changes: adds coverage for host-owned request tool registration alongside runtime helper behavior and the non-reserved cached file-read tool name.
+ * Recent changes: adds coverage for host-owned request tool registration alongside runtime helper behavior.
  */
 
 import assert from "node:assert/strict";
@@ -13,7 +13,8 @@ import {
   createRequestTools,
   isPendingHumanInputToolResult,
   prepareToolCallArguments,
-  redactToolResultForEvent
+  redactToolResultForEvent,
+  resolveRequestToolRoots
 } from "../../src/runtime/runChatCompletion.js";
 
 async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
@@ -25,11 +26,16 @@ async function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): 
   }
 }
 
-test("createRequestTools always includes workspace_read_file and conditionally includes api_request", () => {
+test("createRequestTools returns no custom tools when AIW_STORAGE is unset", () => {
+  assert.deepEqual(createRequestTools("/workspace", {}, "3"), []);
+});
+
+test("createRequestTools includes marp_cli and conditionally includes api_request when AIW_STORAGE is set", () => {
   assert.deepEqual(
-    createRequestTools("/workspace", {}, "3").map((tool) => tool.name),
+    createRequestTools("/workspace", {
+      AIW_STORAGE: "file"
+    }, "3").map((tool) => tool.name),
     [
-      "workspace_read_file",
       "marp_cli",
       "resolve_object",
       "search_content",
@@ -43,10 +49,10 @@ test("createRequestTools always includes workspace_read_file and conditionally i
 
   assert.deepEqual(
     createRequestTools("/workspace", {
+      AIW_STORAGE: "file",
       API_BASE_URL: "https://api.example.test/root"
     }, "3").map((tool) => tool.name),
     [
-      "workspace_read_file",
       "marp_cli",
       "api_request",
       "resolve_object",
@@ -66,7 +72,22 @@ test("createRequestTools includes AIW storage tools by default and honors explic
       AIW_STORAGE: "file"
     }, "3").map((tool) => tool.name),
     [
-      "workspace_read_file",
+      "marp_cli",
+      "resolve_object",
+      "search_content",
+      "list_content",
+      "read_content",
+      "write_content",
+      "create_content",
+      "delete_content"
+    ]
+  );
+
+  assert.deepEqual(
+    createRequestTools("/workspace", {
+      AIW_STORAGE: " FILE "
+    }, "3").map((tool) => tool.name),
+    [
       "marp_cli",
       "resolve_object",
       "search_content",
@@ -86,21 +107,32 @@ test("createRequestTools uses the request workspace root for AIW file storage wh
         AIW_STORAGE: "file"
       }, "3").map((tool) => [tool.name, tool])
     );
+    const writeContentTool = tools.write_content as { execute: (args: Record<string, unknown>) => Promise<{ ok: boolean }> };
 
-    const writeResult = await tools.write_content?.execute({
+    const writeResult = await writeContentTool.execute({
       path: "data/accounts/a123/memory.md",
       content: "Stored in the request workspace root."
     });
-    assert.equal(writeResult?.ok, true);
+    assert.equal(writeResult.ok, true);
 
     const storedContent = await readFile(path.join(workspaceRoot, "users/3/data/accounts/a123/memory.md"), "utf8");
     assert.equal(storedContent, "Stored in the request workspace root.");
   });
 });
 
-test("createRequestTools requires a host-provided userId for all request tools", () => {
+test("resolveRequestToolRoots keeps both the workspace root and user workspace root", () => {
+  assert.deepEqual(
+    resolveRequestToolRoots("/workspace", "3"),
+    {
+      workspaceRoot: "/workspace",
+      userWorkspaceRoot: "/workspace/users/3"
+    }
+  );
+});
+
+test("createRequestTools requires a host-provided userId when AIW_STORAGE enables custom tools", () => {
   assert.throws(
-    () => createRequestTools("/workspace", {}, " "),
+    () => createRequestTools("/workspace", { AIW_STORAGE: "file" }, " "),
     /userId is required/
   );
 });

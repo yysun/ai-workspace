@@ -12,10 +12,9 @@ import { formatStorageTypeForLog, resolveStorageType } from "./storage/utils/con
 async function main(): Promise<void> {
   const env = loadEnv(process.env);
   const app = createServer(env);
-  const storage = formatStorageTypeForLog(resolveStorageType(process.env.AIW_STORAGE));
   const server = app.listen(env.port, () => {
     console.log(`[server] listening on port ${env.port}`);
-    console.log(`[server] storage: ${storage}`);
+    console.log(`[server] storage: ${env.aiwStorage ? formatStorageTypeForLog(resolveStorageType(env.aiwStorage)) : "llm-runtime built-ins"}`);
     console.log(`[workspace] ${env.workspaceRoot}`);
   });
 

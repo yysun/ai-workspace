@@ -10,13 +10,13 @@ Stateless HTTP/SSE server that runs one LLM chat completion turn against a mount
 ## Key paths
 - `src/routes/chatCompletions.ts` — main chat endpoint
 - `src/runtime/` — llm-runtime wiring
-- `src/workspace/` — loads `AGENTS.md` and `.env` from the mounted workspace
+- `src/workspace/` — loads `AGENTS.md` and resolves the mounted workspace root
 - `src/tools/` — workspace tool definitions
 - `tests/` — unit, targeted, e2e
 
 ## Behaviour
 - Loads `AGENTS.md` from `WORKSPACE_ROOT` and prepends it to the system prompt each request.
-- Loads `${WORKSPACE_ROOT}/.env` into `process.env` before each request.
+- Uses only the server process environment for runtime configuration and tool registration.
 - Does **not** own: chat history, sessions, users, multi-agent orchestration, or shell/file tools (those come from `llm-runtime`).
 
 ## Finding information

@@ -1,7 +1,7 @@
 /*
  * Feature: llm-runtime request configuration helpers for ai-workspace.
  * Notes: resolves provider/model selection, runtime defaults, and the server system prompt with appended workspace AGENTS.md content.
- * Recent changes: disables the built-in read_file and guides the model toward a non-reserved host-owned cached workspace_read_file tool.
+ * Recent changes: disables llm-runtime file built-ins when AIW storage tools are active and guides the model toward host-owned request tools.
  */
 
 import type {
@@ -15,6 +15,7 @@ import type {
 } from "llm-runtime";
 import type { EnvConfig } from "../config/env.js";
 import type { ChatMessage, ResolvedRuntimeTarget, RunChatCompletionInput } from "./runtimeTypes.js";
+import { sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const SUPPORTED_PROVIDERS: LLMProviderName[] = ["openai", "anthropic", "google", "azure", "openai-compatible"];
 
@@ -31,9 +32,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "When a task depends on domain-specific instructions, procedures, or API contracts in the workspace, follow the workspace instructions that were loaded from AGENTS.md.",
   "Before claiming workspace-local credentials, configuration, files, or other prerequisites are unavailable, inspect likely sources such as `.env`, project files, and related workspace artifacts when appropriate.",
   "If an external API or network lookup is required, use an available tool instead of narrating intent.",
-  "When the workspace config exposes `api_request`, prefer it for API calls scoped to the configured API_BASE_URL because auth and security headers are applied by the host. Responses are returned inline by default; pass outputFilePath under the current user's workspace directory only when you want the body saved to disk and the path returned explicitly. For repeatable GET requests, pass cacheTtlMs to enable in-memory caching and bypassCache when you need a refresh.",
-  "When available, prefer `workspace_read_file` for workspace file reads; it is host-owned and truncates oversized reads to stay within the token budget.",
-  "When the user asks for slides or a deck, prefer `marp_cli` to render Markdown slide decks into workspace HTML, PDF, PPTX, or notes outputs instead of describing the conversion steps.",
+  "When the runtime exposes custom workspace tools such as `api_request`, `marp_cli`, or AIW content tools, prefer them for their specialized behavior.",
   "Prefer `shell_cmd` for authenticated API work only when workspace instructions explicitly require `curl`; prefer `web_fetch` for simple unauthenticated HTTP or HTTPS fetches.",
   "When using `shell_cmd`, workspace environment references such as `$NAME` and `${NAME}` in command arguments are resolved by the runtime for execution; secret values are redacted from tool event output.",
   "Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable.",
@@ -169,18 +168,18 @@ export function resolveRuntimeTarget(input: RunChatCompletionInput, env: EnvConf
   };
 }
 
-export function createBuiltInSelection(): BuiltInToolSelection {
+export function createBuiltInSelection(usesAiwStorageTools = false): BuiltInToolSelection {
   return {
     shell_cmd: true,
     web_fetch: false,
     load_skill: false,
     ask_user_input: true,
-    read_file: false,
-    write_file: true,
-    list_files: true,
-    search_files: true,
-    create_directory: true,
-    path_exists: true
+    read_file: true,
+    write_file: !usesAiwStorageTools,
+    list_files: !usesAiwStorageTools,
+    search_files: !usesAiwStorageTools,
+    create_directory: !usesAiwStorageTools,
+    path_exists: !usesAiwStorageTools
   };
 }
 
@@ -221,11 +220,11 @@ export function composeSystemPrompt(
   const sections = [DEFAULT_SYSTEM_PROMPT];
 
   if (runtimeUserContext) {
+    const userRoot = `users/${sanitizeUserIdForPath(runtimeUserContext.userId)}`;
     sections.push([
       "Runtime user context:",
       `- User ID: ${runtimeUserContext.userId}`,
-      "- Shared workspace files such as AGENTS.md, process/, data/, and output/ are available in the mounted workspace.",
-      "- Use explicit users/<id>/... paths only for user-scoped files."
+      `- User Root: ${userRoot}`
     ].join("\n"));
   }
 

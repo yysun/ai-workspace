@@ -122,7 +122,7 @@ test("api_request saves the raw response body to outputFilePath when requested",
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/user-7"),
       userId: "user-7",
       fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
         status: 200,
@@ -136,7 +136,7 @@ test("api_request saves the raw response body to outputFilePath when requested",
     const result = await tool?.execute?.({
       method: "GET",
       path: "/notes",
-      outputFilePath: "users/user-7/data/api-responses/notes.json"
+      outputFilePath: "data/api-responses/notes.json"
     }, {});
 
     assert.deepEqual(result, {
@@ -148,7 +148,7 @@ test("api_request saves the raw response body to outputFilePath when requested",
         "content-type": "application/json"
       },
       bodySaved: true,
-      bodyFilePath: "users/user-7/data/api-responses/notes.json",
+      bodyFilePath: "data/api-responses/notes.json",
       bodyBytes: Buffer.byteLength(JSON.stringify({ huge: true, note: "saved" }), "utf8")
     });
 
@@ -163,7 +163,7 @@ test("api_request accepts outputFilePath relative to the user workspace director
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/3"),
       userId: "3",
       fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
         status: 200,
@@ -189,7 +189,7 @@ test("api_request accepts outputFilePath relative to the user workspace director
         "content-type": "application/json"
       },
       bodySaved: true,
-      bodyFilePath: "users/3/scratch/api/data/users/me/notes.json",
+      bodyFilePath: "scratch/api/data/users/me/notes.json",
       bodyBytes: Buffer.byteLength(JSON.stringify({ huge: true, note: "saved" }), "utf8")
     });
 
@@ -204,7 +204,7 @@ test("api_request rejects absolute outputFilePath values", async () => {
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/user-7"),
       userId: "user-7",
       fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
         status: 200,
@@ -231,15 +231,17 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
     const outsideDir = await mkdtemp(path.join(os.tmpdir(), "ai-workspace-api-tool-outside-"));
 
     try {
-      const symlinkPath = path.join(tempDir, "linked-output");
+      const userWorkspaceRoot = path.join(tempDir, "users/user-7");
+      const symlinkPath = path.join(userWorkspaceRoot, "linked-output");
       await mkdir(outsideDir, { recursive: true });
+      await mkdir(userWorkspaceRoot, { recursive: true });
       await symlink(outsideDir, symlinkPath, "dir");
 
       const tool = createApiRequestTool({
         envSource: {
           API_BASE_URL: "https://api.example.test/v1"
         },
-        workspaceRoot: tempDir,
+        workspaceRoot: userWorkspaceRoot,
         userId: "user-7",
         fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
           status: 200,
@@ -256,7 +258,7 @@ test("api_request rejects symlinked directory escapes for outputFilePath", async
           path: "/notes",
           outputFilePath: "linked-output/notes.json"
         }, {}),
-        /api_request outputFilePath must stay within users\/user-7/
+        /api_request outputFilePath must stay within the workspace root/
       );
     } finally {
       await rm(outsideDir, { recursive: true, force: true });
@@ -270,7 +272,7 @@ test("api_request rejects outputFilePath outside the current user's workspace di
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/user-7"),
       userId: "user-7",
       fetchImpl: async () => new Response(JSON.stringify({ huge: true, note: "saved" }), {
         status: 200,
@@ -285,9 +287,9 @@ test("api_request rejects outputFilePath outside the current user's workspace di
       async () => await tool?.execute?.({
         method: "GET",
         path: "/notes",
-        outputFilePath: "AGENTS.md"
+        outputFilePath: "../AGENTS.md"
       }, {}),
-      /api_request outputFilePath must stay within users\/user-7/
+      /api_request outputFilePath must stay within the workspace root/
     );
   });
 });
@@ -299,7 +301,7 @@ test("api_request returns oversized responses inline when outputFilePath is omit
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/tenant_user_9"),
       userId: "tenant/user.9",
       inlineBodyByteLimit: 32,
       fetchImpl: async () => new Response(largeBody, {
@@ -338,7 +340,7 @@ test("api_request reuses cached GET responses within cacheTtlMs", async () => {
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/cache-hit-user"),
       userId: "cache-hit-user",
       fetchImpl: async () => {
         fetchCount += 1;
@@ -461,7 +463,7 @@ test("api_request bypasses and refreshes cached GET responses when requested", a
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/cache-bypass-user"),
       userId: "cache-bypass-user",
       fetchImpl: async () => {
         fetchCount += 1;
@@ -537,7 +539,7 @@ test("api_request refetches GET responses after cache expiry", async () => {
         envSource: {
           API_BASE_URL: "https://api.example.test/v1"
         },
-        workspaceRoot: tempDir,
+        workspaceRoot: path.join(tempDir, "users/cache-expiry-user"),
         userId: "cache-expiry-user",
         fetchImpl: async () => {
           fetchCount += 1;
@@ -619,7 +621,7 @@ test("api_request ignores unusable cache controls without failing the request", 
       envSource: {
         API_BASE_URL: "https://api.example.test/v1"
       },
-      workspaceRoot: tempDir,
+      workspaceRoot: path.join(tempDir, "users/user-7"),
       userId: "user-7",
       fetchImpl: async () => new Response("ok", {
         status: 200,

@@ -11,12 +11,11 @@ source_paths:
   - "tests/unit/apiTool.test.ts"
   - "tests/unit/contentUtils.test.ts"
   - "tests/unit/loadWorkspaceEnv.test.ts"
-  - "tests/unit/readFileTool.test.ts"
   - "tests/unit/runChatCompletion.test.ts"
   - "tests/unit/runtimeConfig.test.ts"
   - "tests/unit/storageFileProvider.test.ts"
   - "tests/unit/streamingTestCli.test.ts"
-updated_at: "2026-05-17"
+updated_at: "2026-05-18"
 ---
 
 # Test Suite
@@ -30,7 +29,7 @@ Unit coverage focuses on small helpers that do not need a live model provider. E
 - shell argument environment expansion and secret redaction
 - runtime configuration parsing and provider selection defaults
 - workspace `.env` loading behavior
-- host-owned `api_request` and `workspace_read_file` behavior
+- host-owned `api_request`, `marp_cli`, and runtime request-tool behavior
 - AI workspace file-provider reads, writes, search, binary handling, and path-boundary checks
 - streaming CLI rendering and human-input formatting
 

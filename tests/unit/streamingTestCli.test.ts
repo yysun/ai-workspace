@@ -406,46 +406,6 @@ test("formatToolResultEventLine prefers requested read_file line ranges", () => 
   );
 });
 
-test("formatToolResultEventLine suppresses workspace_read_file previews", () => {
-  assert.equal(
-    formatToolResultEventLine(
-      "workspace_read_file",
-      "---\ncreated_at: 2026-05-17T00:00:00Z\nupdated_at: 2026-05-17T00:00:00Z\n",
-      "default",
-      {
-        filePath: "users/3/data/contacts/99000002/current/sources.md"
-      },
-      1
-    ),
-    [
-      "",
-      "  ✓ workspace_read_file 1ms · 3 lines",
-      ""
-    ].join("\n")
-  );
-});
-
-test("formatToolResultEventLine ignores requested line ranges for workspace_read_file", () => {
-  assert.equal(
-    formatToolResultEventLine(
-      "workspace_read_file",
-      "alpha\nbeta\ngamma\ndelta\n",
-      "default",
-      {
-        filePath: "users/3/data/contacts/99000002/current/sources.md",
-        startLine: 1,
-        endLine: 200
-      },
-      2
-    ),
-    [
-      "",
-      "  ✓ workspace_read_file 2ms · 4 lines",
-      ""
-    ].join("\n")
-  );
-});
-
 test("formatToolResultEventLine uses event timing for shell_cmd markdown results", () => {
   assert.equal(
     formatToolResultEventLine(
@@ -550,6 +510,29 @@ test("formatToolResultEventLine includes saved output paths for api_request", ()
     [
       "",
       "  ✓ api_request 42ms · completed · saved to users/user-7/data/api-responses/notes.json",
+      ""
+    ].join("\n")
+  );
+});
+
+test("formatToolResultEventLine summarizes api_request output path validation failures", () => {
+  assert.equal(
+    formatToolResultEventLine(
+      "api_request",
+      JSON.stringify({
+        error: "Tool \"api_request\" execution failed: api_request outputFilePath must stay within the workspace root"
+      }),
+      "default",
+      {
+        method: "GET",
+        path: "/api/data/users/me/notes",
+        outputFilePath: "../notes.json"
+      },
+      3090
+    ),
+    [
+      "",
+      "  ✗ api_request 3090ms · cannot save to: ../notes.json",
       ""
     ].join("\n")
   );
@@ -856,73 +839,6 @@ test("streamAssistantTurn keeps tool call and result adjacent on a shared TTY", 
       sharedTerminal.text(),
       /↳ read_file data\/contacts\/4539\/2026\/05\/09\/insight\.md(?:\u001b\[[0-9;]*m)*\n\n(?:\u001b\[[0-9;]*m)*\s*✓ read_file lines 41-47/u
     );
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test("streamAssistantTurn does not preview workspace_read_file content", async () => {
-  const sharedTerminal = createWritableCapture(true);
-  const originalFetch = global.fetch;
-
-  global.fetch = (async () => createSseResponse([
-    {
-      event: "tool.call",
-      data: {
-        type: "tool.call",
-        name: "workspace_read_file",
-        args: {
-          filePath: "users/3/data/contacts/99000002/current/sources.md"
-        },
-        toolCallId: "call_workspace_read"
-      }
-    },
-    {
-      event: "tool.result",
-      data: {
-        type: "tool.result",
-        name: "workspace_read_file",
-        result: "---\ncreated_at: 2026-05-17T00:00:00Z\nupdated_at: 2026-05-17T00:00:00Z\n",
-        durationMs: 1,
-        toolCallId: "call_workspace_read"
-      }
-    },
-    {
-      event: "message.done",
-      data: {
-        type: "message.done",
-        message: {
-          role: "assistant",
-          content: "done"
-        }
-      }
-    },
-    {
-      event: "done",
-      data: {}
-    }
-  ])) as typeof fetch;
-
-  try {
-    await streamAssistantTurn({
-      baseUrl: "http://localhost:3000",
-      model: "default",
-      autoContinue: false,
-      autoContinueMessage: "go ahead",
-      autoContinueTurns: 1,
-      traceMode: "default"
-    }, [], "run it", sharedTerminal.output, sharedTerminal.output);
-
-    assert.match(
-      sharedTerminal.text(),
-      /↳ workspace_read_file users\/3\/data\/contacts\/99000002\/current\/sources\.md(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*\s*✓ workspace_read_file 1ms · 3 lines/u
-    );
-    assert.match(
-      sharedTerminal.text(),
-      /✓ workspace_read_file 1ms · 3 lines\n(?:\u001b\[[0-9;]*m)*\n(?:\u001b\[[0-9;]*m)*done/u
-    );
-    assert.doesNotMatch(sharedTerminal.text(), /created_at: 2026-05-17T00:00:00Z/u);
-    assert.doesNotMatch(sharedTerminal.text(), /updated_at: 2026-05-17T00:00:00Z/u);
   } finally {
     global.fetch = originalFetch;
   }

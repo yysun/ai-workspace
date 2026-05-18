@@ -7,9 +7,12 @@
 import path from "node:path";
 import type { LLMProviderName, ReasoningEffort, ToolPermission } from "llm-runtime";
 
+export type AiwStorageType = "file" | "mssql";
+
 export type EnvConfig = {
   port: number;
   workspaceRoot: string;
+  aiwStorage?: AiwStorageType;
   llmProvider?: LLMProviderName;
   llmModel?: string;
   llmMaxToken?: number;
@@ -70,6 +73,19 @@ function parseOptionalProvider(value: string | undefined): LLMProviderName | und
     : undefined;
 }
 
+function parseOptionalAiwStorage(value: string | undefined): AiwStorageType | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "file" || normalized === "mssql") {
+    return normalized;
+  }
+
+  throw new Error(`Unsupported AIW_STORAGE: ${value}`);
+}
+
 function parseToolPermission(value: string | undefined): ToolPermission {
   if (!value?.trim()) {
     return "auto";
@@ -96,6 +112,7 @@ export function loadEnv(source: NodeJS.ProcessEnv): EnvConfig {
   return {
     port: parsePort(source.PORT),
     workspaceRoot: path.resolve(source.WORKSPACE_ROOT ?? "/workspace"),
+    aiwStorage: parseOptionalAiwStorage(source.AIW_STORAGE),
     llmProvider: parseOptionalProvider(source.LLM_PROVIDER),
     llmModel: source.LLM_MODEL?.trim() || undefined,
     llmMaxToken: parseOptionalPositiveInteger(source.LLM_MAXTOKEN),

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import path from "node:path";
 import { AiwError, type StorageType, type WorkspaceContext } from "../types.js";
 import { resolveToolWorkspaceRoot } from "../../workspace/resolveWorkspace.js";
 
@@ -16,16 +17,19 @@ export function createWorkspaceContext(options: CreateContextOptions = {}): Work
   const storage = options.storage ?? resolveStorageType(envSource.AIW_STORAGE);
   const workspaceId = options.workspaceId ?? envSource.AIW_WORKSPACE_ID ?? "local";
   const userId = trimRequiredUserId(options.userId ?? envSource.AIW_USER_ID);
+  const fileRoot = options.fileRoot
+    ? path.resolve(options.fileRoot)
+    : resolveToolWorkspaceRoot({
+      workspaceRoot: envSource.WORKSPACE_ROOT,
+      userId,
+      defaultRoot: "./aiw-workspace"
+    });
 
   const context: WorkspaceContext = {
     storage,
     workspaceId,
     userId,
-    fileRoot: resolveToolWorkspaceRoot({
-      workspaceRoot: options.fileRoot ?? envSource.WORKSPACE_ROOT,
-      userId,
-      defaultRoot: "./aiw-workspace"
-    }),
+    fileRoot,
     mssqlConnectionString: options.mssqlConnectionString ?? envSource.AIW_MSSQL_CONNECTION_STRING
   };
 

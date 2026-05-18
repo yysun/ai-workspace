@@ -7,11 +7,10 @@ source_paths:
   - "src/runtime/runChatCompletion.ts"
   - "src/runtime/runtimeConfig.ts"
   - "src/runtime/runtimeTypes.ts"
-  - "src/tools/readFileTool.ts"
   - "src/tools/apiRequestTool.ts"
   - "src/storage/providers/index.ts"
   - "src/storage/tools/aiwTools.ts"
-updated_at: "2026-05-17"
+updated_at: "2026-05-18"
 ---
 
 # Runtime Orchestration
@@ -25,7 +24,7 @@ This page explains the handoff from the web server into the model runner. In pla
 - Turn incoming chat messages into the format expected by `llm-runtime`.
 - Tell the runtime where to find workspace skills.
 - Decide which model provider and model name to use when the request leaves those choices open.
-- Register the host-owned tools that wrap workspace reads, API access, and AI workspace content storage.
+- Register the host-owned tools for API access, deck rendering, and AI workspace content storage.
 - Send the runtime's progress and final output back to the route layer.
 
 ## Event Contract
@@ -47,9 +46,9 @@ This layer also handles a few safety details for the host. It expands shell argu
 
 ## Request-Owned Tools
 
-The runtime still relies on `llm-runtime` for the generic built-ins, but this host now adds three request-scoped tool surfaces of its own:
+The runtime still relies on `llm-runtime` for the generic built-ins, but this host adds request-scoped tool surfaces of its own when AI workspace storage is enabled:
 
-- `workspace_read_file` is always present. It reads a full file from the mounted workspace, ignores legacy line-range arguments for compatibility, and caches repeated reads by real path and file version.
+- `marp_cli` renders Markdown decks from the user workspace into supported output formats such as `.html`, `.pdf`, `.pptx`, or speaker-note text.
 - `api_request` is added only when the workspace `.env` exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, returns response bodies inline by default, saves bodies under a user-scoped `api-responses` folder only when the caller provides `outputFilePath`, and can reuse successful `GET` responses from an in-memory cache when the caller provides `cacheTtlMs`.
 - The AI workspace content tools described in [[workspace-tools-and-storage]] are always added. They sit on top of either the file provider or the SQL Server provider and are keyed by the resolved user id.
 

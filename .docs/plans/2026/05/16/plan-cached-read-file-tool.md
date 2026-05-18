@@ -91,7 +91,7 @@ Dedicated E2E coverage is not required. This is an internal runtime integration 
 - Initial plan created for RPD execution.
 - AR passed: no blocking architecture flaws.
 - No dedicated E2E spec is required for this internal runtime change.
-- Added a host-owned cached `workspace_read_file` tool in `src/tools/readFileTool.ts` with workspace-boundary checks and cache keys based on resolved path, requested range, and file version.
-- Disabled the delegated built-in `read_file` in runtime built-ins and registered the host-owned `workspace_read_file` tool during per-request runtime creation while preserving optional `api_request` registration.
+- Added a host-owned cached workspace read tool in `src/tools/readFileTool.ts` with workspace-boundary checks and cache keys based on resolved path, requested range, and file version.
+- Disabled the delegated built-in `read_file` in runtime built-ins and registered the host-owned custom read tool during per-request runtime creation while preserving optional `api_request` registration.
 - Added focused unit coverage for cache hits, invalidation on file change, workspace-boundary enforcement, missing-file errors, and request tool registration.
 - Verified with `node --import tsx --test tests/unit/readFileTool.test.ts tests/unit/runChatCompletion.test.ts tests/unit/runtimeConfig.test.ts`, `npm run build`, and `npm run test:unit`.

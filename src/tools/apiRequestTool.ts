@@ -8,7 +8,7 @@ import type { LLMToolDefinition, LLMToolExecutionContext } from "llm-runtime";
 import { createHash } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveUserWorkspaceRoot, sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
+import { sanitizeUserIdForPath } from "../workspace/resolveWorkspace.js";
 
 const API_TOOL_NAME = "api_request";
 const DEFAULT_SECURITY_CONTEXT_HEADER = "X-Security-Context";
@@ -267,20 +267,17 @@ function isNestedRelativePath(requestedPath: string): boolean {
 async function resolveWorkspaceOutputPath(
   workspaceRoot: string,
   workspaceRootRealPathPromise: Promise<string>,
-  userId: string,
   requestedPath: string
 ): Promise<string> {
   if (path.isAbsolute(requestedPath)) {
     throw new Error("api_request outputFilePath must be relative to the workspace root");
   }
 
-  const allowedRootPath = resolveUserWorkspaceRoot(workspaceRoot, userId);
+  const allowedRootPath = workspaceRoot;
   const workspaceRelativeCandidatePath = path.resolve(workspaceRoot, requestedPath);
-  const candidatePath = isPathInside(allowedRootPath, workspaceRelativeCandidatePath)
+  const candidatePath = !isNestedRelativePath(requestedPath) || await hasExistingWorkspaceAnchor(workspaceRoot, requestedPath)
     ? workspaceRelativeCandidatePath
-    : !isNestedRelativePath(requestedPath) || await hasExistingWorkspaceAnchor(workspaceRoot, requestedPath)
-      ? workspaceRelativeCandidatePath
-      : path.resolve(allowedRootPath, requestedPath);
+    : path.resolve(allowedRootPath, requestedPath);
 
   if (!isPathInside(workspaceRoot, candidatePath)) {
     throw new Error("api_request outputFilePath must stay within the workspace root");
@@ -495,7 +492,6 @@ async function buildApiResponseResult(
     const resolvedOutputPath = await resolveWorkspaceOutputPath(
       storage.workspaceRoot,
       storage.workspaceRootRealPathPromise ?? Promise.resolve(storage.workspaceRoot),
-      storage.userId,
       requestedOutputFilePath
     );
 
@@ -601,7 +597,7 @@ export function createApiRequestTool(options: {
   const fetchImpl = options.fetchImpl ?? fetch;
   const config = resolveApiToolConfig(envSource);
   const workspaceRootRealPathPromise = options.workspaceRoot
-    ? realpath(options.workspaceRoot).catch(() => options.workspaceRoot as string)
+    ? realpath(options.workspaceRoot).catch(async () => await resolveNearestExistingParentRealPath(options.workspaceRoot as string))
     : undefined;
 
   if (!config) {

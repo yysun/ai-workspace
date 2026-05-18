@@ -1,7 +1,7 @@
 /*
  * Feature: unit tests for llm-runtime request configuration helpers.
  * Notes: verifies prompt composition and generic LLM_* defaults without requiring live provider calls.
- * Recent changes: verifies the built-in read_file is disabled so the host-owned cached replacement can be registered.
+ * Recent changes: verifies llm-runtime file built-ins are disabled when AIW storage tools are active.
  */
 
 import assert from "node:assert/strict";
@@ -43,15 +43,30 @@ test("composeSystemPrompt appends AGENTS.md content to the default system prompt
   assert.match(prompt, /Prefer workspace evidence over speculation/);
   assert.match(prompt, /Runtime user context:/);
   assert.match(prompt, /User ID: 3/);
+  assert.match(prompt, /User Root: users\/3/);
   assert.doesNotMatch(prompt, /Workspace root:/);
-  assert.doesNotMatch(prompt, /User root:/);
   assert.doesNotMatch(prompt, /Tool working directory:/);
   assert.match(prompt, /Do not claim you lack access to workspace information unless a tool result or runtime constraint actually shows that access is unavailable\./);
-  assert.match(prompt, /Responses are returned inline by default; pass outputFilePath under the current user's workspace directory only when you want the body saved to disk and the path returned explicitly\./);
-  assert.match(prompt, /prefer `workspace_read_file` for workspace file reads; it is host-owned and truncates oversized reads to stay within the token budget\./);
-  assert.match(prompt, /prefer `marp_cli` to render Markdown slide decks into workspace HTML, PDF, PPTX, or notes outputs instead of describing the conversion steps\./);
-  assert.match(prompt, /For repeatable GET requests, pass cacheTtlMs to enable in-memory caching and bypassCache when you need a refresh\./);
+  assert.match(prompt, /When the runtime exposes custom workspace tools such as `api_request`, `marp_cli`, or AIW content tools, prefer them for their specialized behavior\./);
   assert.match(prompt, /Additional workspace instructions:\nAlways cite the workspace policy\./);
+});
+
+test("composeSystemPrompt includes the user root relative to workspace", () => {
+  const prompt = composeSystemPrompt("Do not use generic file tools for discovery, reads, writes, or existence checks against `data/...` or `output/...`.", {
+    userId: "3"
+  });
+
+  assert.match(prompt, /Runtime user context:\n- User ID: 3\n- User Root: users\/3/);
+  assert.doesNotMatch(prompt, /workspace root/);
+});
+
+test("composeSystemPrompt sanitizes the user root path segment", () => {
+  const prompt = composeSystemPrompt(null, {
+    userId: "tenant/user.9"
+  });
+
+  assert.match(prompt, /User ID: tenant\/user\.9/);
+  assert.match(prompt, /User Root: users\/tenant_user_9/);
 });
 
 test("buildRuntimeMessages prepends one system message before user content", () => {
@@ -167,11 +182,37 @@ test("resolveMaxIterations prefers explicit iteration limits and falls back to t
 test("createBuiltInSelection disables load_skill", () => {
   const selection = createBuiltInSelection();
   const normalized = normalizeBuiltInToolSelection(selection);
-  const disabledTools = new Set(["load_skill", "web_fetch", "read_file"]);
+  const disabledTools = new Set(["load_skill", "web_fetch"]);
 
   for (const toolName of BUILT_IN_TOOL_NAMES) {
     assert.equal(normalized[toolName], !disabledTools.has(toolName));
   }
+});
+
+test("createBuiltInSelection keeps llm-runtime file tools available when AIW_STORAGE is unset", () => {
+  const normalized = normalizeBuiltInToolSelection(createBuiltInSelection(false));
+
+  assert.equal(normalized.shell_cmd, true);
+  assert.equal(normalized.ask_user_input, true);
+  assert.equal(normalized.read_file, true);
+  assert.equal(normalized.write_file, true);
+  assert.equal(normalized.list_files, true);
+  assert.equal(normalized.search_files, true);
+  assert.equal(normalized.create_directory, true);
+  assert.equal(normalized.path_exists, true);
+});
+
+test("createBuiltInSelection keeps read_file but disables other llm-runtime file tools when AIW_STORAGE is set", () => {
+  const normalized = normalizeBuiltInToolSelection(createBuiltInSelection(true));
+
+  assert.equal(normalized.shell_cmd, true);
+  assert.equal(normalized.ask_user_input, true);
+  assert.equal(normalized.read_file, true);
+  assert.equal(normalized.write_file, false);
+  assert.equal(normalized.list_files, false);
+  assert.equal(normalized.search_files, false);
+  assert.equal(normalized.create_directory, false);
+  assert.equal(normalized.path_exists, false);
 });
 
 test("createEnvironmentOptions only configures provider defaults", () => {
@@ -228,4 +269,26 @@ test("loadEnv parses LLM_MAX_ITERATIONS and MAX_ITERATIONS aliases", () => {
     WORKSPACE_ROOT: "/workspace",
     MAX_ITERATIONS: "60"
   }).llmMaxIterations, 60);
+});
+
+test("loadEnv parses AIW_STORAGE when configured", () => {
+  assert.equal(loadEnv({
+    PORT: "3000",
+    WORKSPACE_ROOT: "/workspace",
+    AIW_STORAGE: "file"
+  }).aiwStorage, "file");
+
+  assert.equal(loadEnv({
+    PORT: "3000",
+    WORKSPACE_ROOT: "/workspace"
+  }).aiwStorage, undefined);
+
+  assert.throws(
+    () => loadEnv({
+      PORT: "3000",
+      WORKSPACE_ROOT: "/workspace",
+      AIW_STORAGE: "bogus"
+    }),
+    /Unsupported AIW_STORAGE: bogus/
+  );
 });

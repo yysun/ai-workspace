@@ -4,8 +4,6 @@
  * Recent changes: added bounded previews for shell, file, and generic tool activity plus debug-mode raw rendering.
  */
 
-import { WORKSPACE_READ_FILE_TOOL_NAME } from "../tools/readFileTool.js";
-
 export type TraceMode = "default" | "verbose" | "debug";
 
 export type ToolCallView = {
@@ -194,7 +192,7 @@ function formatRequestedLineSummary(args: unknown): string | null {
 }
 
 function isReadFileLikeToolName(toolName: string): boolean {
-  return toolName === "read_file" || toolName === WORKSPACE_READ_FILE_TOOL_NAME;
+  return toolName === "read_file";
 }
 
 function formatFileSize(bytes: number): string {
@@ -404,14 +402,11 @@ function summarizeReadFileResult(
     ? result
     : readFirstString(record, "content", "text", "result");
   const lineCount = content ? countLines(content) : null;
-  const requestedLineSummary = toolName === WORKSPACE_READ_FILE_TOOL_NAME
-    ? null
-    : formatRequestedLineSummary(callArgs);
   return {
     name: toolName,
     ok: inferOk(record, true),
     durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
-    summary: requestedLineSummary ?? (lineCount === null ? "completed" : formatLineCount(lineCount)),
+    summary: formatRequestedLineSummary(callArgs) ?? (lineCount === null ? "completed" : formatLineCount(lineCount)),
     raw: result
   };
 }
@@ -499,6 +494,33 @@ function summarizeApiRequestResult(result: unknown, forcedDurationMs?: number): 
   }
 
   return summarizeGenericToolResult(result, "api_request", forcedDurationMs);
+}
+
+function summarizeApiRequestOutputPathFailure(
+  result: unknown,
+  forcedDurationMs?: number,
+  callArgs?: unknown
+): ToolResultView | null {
+  const record = parseJsonRecord(result);
+  const errorText = readFirstString(record, "error", "message", "detail");
+  const args = isRecord(callArgs) ? callArgs : null;
+  const outputFilePath = readFirstString(args, "outputFilePath");
+
+  if (!errorText || !outputFilePath) {
+    return null;
+  }
+
+  if (!/api_request outputFilePath must /i.test(errorText)) {
+    return null;
+  }
+
+  return {
+    name: "api_request",
+    ok: false,
+    durationMs: forcedDurationMs ?? readFirstNumber(record, "duration_ms", "durationMs") ?? undefined,
+    summary: `cannot save to: ${truncateOneLine(outputFilePath, MAX_PREVIEW_LINE_WIDTH)}`,
+    raw: result
+  };
 }
 
 function readDataField(result: unknown): unknown {
@@ -822,7 +844,8 @@ export function summarizeToolResult(toolName: string, result: unknown, durationM
   }
 
   if (toolName === "api_request") {
-    return summarizeApiRequestResult(result, durationMs);
+    return summarizeApiRequestOutputPathFailure(result, durationMs, callArgs)
+      ?? summarizeApiRequestResult(result, durationMs);
   }
 
   if (toolName === "marp_cli") {

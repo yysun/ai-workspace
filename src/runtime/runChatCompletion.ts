@@ -1,7 +1,7 @@
 /*
  * Feature: per-request llm-runtime orchestration for workspace-aware chat completion.
  * Notes: appends workspace AGENTS.md to the server system prompt, delegates built-ins and workspace API access to llm-runtime, and emits a unified event stream for SSE and JSON callers.
- * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken and registers a host-owned cached workspace_read_file tool per request.
+ * Recent changes: injects per-user API_ACCESS_TOKEN from input.accessToken and registers request-scoped host-owned tools per request.
  */
 
 import {
@@ -16,7 +16,6 @@ import { createWorkspaceProvider } from "../storage/providers/index.js";
 import { createAiwTools } from "../storage/tools/aiwTools.js";
 import { createApiRequestTool } from "../tools/apiRequestTool.js";
 import { createMarpCliTool } from "../tools/marpCliTool.js";
-import { createReadFileTool } from "../tools/readFileTool.js";
 import {
   buildRuntimeMessages,
   createBuiltInSelection,
@@ -27,8 +26,8 @@ import {
   resolveRuntimeTarget
 } from "./runtimeConfig.js";
 import type { ChatMessage, RunChatCompletionInput, RuntimeEvent } from "./runtimeTypes.js";
-import { applyWorkspaceEnv } from "../workspace/loadWorkspaceEnv.js";
-import { resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
+import { resolveUserWorkspaceRoot, resolveWorkspaceRoot } from "../workspace/resolveWorkspace.js";
+import type { AiwStorageType } from "../config/env.js";
 
 type RuntimeState = {
   messages: LLMChatMessage[];
@@ -263,33 +262,52 @@ export function createRequestTools(
   userId: string,
   registerCloser: (close: () => Promise<void>) => void = () => undefined
 ): LLMToolDefinition[] {
+  const aiwStorage = parseOptionalAiwStorage(envSource.AIW_STORAGE);
+  if (!aiwStorage) {
+    return [];
+  }
+
   const scopedUserId = requireUserId(userId);
-  const requestWorkspaceRoot = resolveWorkspaceRoot(workspaceRoot);
-  const storageEnvSource: NodeJS.ProcessEnv = {
-    ...envSource,
-    WORKSPACE_ROOT: requestWorkspaceRoot
-  };
+  const requestToolRoots = resolveRequestToolRoots(workspaceRoot, scopedUserId);
+  const { workspaceRoot: requestWorkspaceRoot, userWorkspaceRoot } = requestToolRoots;
   const tools: LLMToolDefinition[] = [
-    createReadFileTool({ workspaceRoot: requestWorkspaceRoot }),
-    createMarpCliTool({ workspaceRoot: requestWorkspaceRoot })
+    createMarpCliTool({ workspaceRoot: userWorkspaceRoot })
   ];
-  const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot: requestWorkspaceRoot, userId: scopedUserId });
+  const apiRequestTool = createApiRequestTool({ envSource, workspaceRoot: userWorkspaceRoot, userId: scopedUserId });
   if (apiRequestTool) {
     tools.push(apiRequestTool);
   }
 
   const provider = createWorkspaceProvider({
-    envSource: storageEnvSource,
-    userId: scopedUserId
+    envSource,
+    storage: aiwStorage,
+    userId: scopedUserId,
+    fileRoot: userWorkspaceRoot
   });
   tools.push(...createAiwTools(provider, {
-    cacheNamespace: `${storageEnvSource.AIW_STORAGE ?? "file"}:${requestWorkspaceRoot}:${scopedUserId}`
+    cacheNamespace: `${aiwStorage}:${userWorkspaceRoot}:${scopedUserId}`
   }));
   if (provider.close) {
     registerCloser(() => provider.close?.() ?? Promise.resolve());
   }
 
   return tools;
+}
+
+export function resolveRequestToolRoots(
+  workspaceRoot: string,
+  userId: string
+): {
+  workspaceRoot: string;
+  userWorkspaceRoot: string;
+} {
+  const requestWorkspaceRoot = resolveWorkspaceRoot(workspaceRoot);
+  const userWorkspaceRoot = resolveUserWorkspaceRoot(requestWorkspaceRoot, userId);
+
+  return {
+    workspaceRoot: requestWorkspaceRoot,
+    userWorkspaceRoot
+  };
 }
 
 function requireUserId(userId: string): string {
@@ -301,22 +319,28 @@ function requireUserId(userId: string): string {
   return trimmed;
 }
 
+function parseOptionalAiwStorage(value: string | undefined): AiwStorageType | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "file" || normalized === "mssql") {
+    return normalized;
+  }
+
+  throw new Error(`Unsupported AIW_STORAGE: ${value}`);
+}
+
 export async function* runChatCompletion(
   input: RunChatCompletionInput,
   env: EnvConfig
 ): AsyncIterable<RuntimeEvent> {
-  let restoreWorkspaceEnv: () => void = () => undefined;
   let environment: LLMRuntime | undefined;
   const toolClosers: Array<() => Promise<void>> = [];
-  const workingDirectory = input.workspaceRoot;
   const toolStartedAt = new Map<string, number>();
 
   try {
-    const appliedWorkspaceEnv = await applyWorkspaceEnv(input.workspaceRoot, {
-      target: process.env,
-      override: true
-    });
-    restoreWorkspaceEnv = appliedWorkspaceEnv.restore;
     const requestEnv = { ...process.env };
 
     if (input.accessToken) {
@@ -324,7 +348,9 @@ export async function* runChatCompletion(
     }
 
     const agentsMd = input.agentsMd ?? null;
-    const builtIns = createBuiltInSelection();
+    const workingDirectory = resolveWorkspaceRoot(input.workspaceRoot);
+    const usesAiwStorageTools = !!env.aiwStorage;
+    const builtIns = createBuiltInSelection(usesAiwStorageTools);
     const runtimeTarget = resolveRuntimeTarget(input, env);
     environment = createRuntime(createEnvironmentOptions(env, input.workspaceRoot));
     const extraTools = createRequestTools(input.workspaceRoot, requestEnv, input.userId, (close) => {
@@ -470,7 +496,6 @@ export async function* runChatCompletion(
     await Promise.all(toolClosers.map(async (close) => {
       await close().catch(() => undefined);
     }));
-    restoreWorkspaceEnv();
     if (environment) {
       await environment.dispose().catch(() => undefined);
     }

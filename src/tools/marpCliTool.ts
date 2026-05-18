@@ -141,6 +141,33 @@ async function resolveNearestExistingParentRealPath(candidatePath: string, realp
   }
 }
 
+async function resolveNearestExistingParent(
+  candidatePath: string,
+  realpathImpl: (filePath: string) => Promise<string>
+): Promise<{ path: string; realPath: string }> {
+  let currentPath = path.dirname(candidatePath);
+
+  while (true) {
+    try {
+      return {
+        path: currentPath,
+        realPath: await realpathImpl(currentPath)
+      };
+    } catch (error) {
+      if (toNodeErrorCode(error) !== "ENOENT") {
+        throw error;
+      }
+
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        throw error;
+      }
+
+      currentPath = parentPath;
+    }
+  }
+}
+
 async function resolveExistingWorkspaceFilePath(
   workspaceRootPath: string,
   workspaceRootRealPathPromise: Promise<string>,
@@ -192,15 +219,15 @@ async function resolveWorkspaceOutputPath(
       throw new Error("marp_cli outputFilePath must stay within the workspace root");
     }
 
-    return candidatePath;
+    return existingTargetRealPath;
   }
 
-  const existingParentRealPath = await resolveNearestExistingParentRealPath(candidatePath, realpathImpl);
-  if (!isPathInside(workspaceRootRealPath, existingParentRealPath)) {
+  const existingParent = await resolveNearestExistingParent(candidatePath, realpathImpl);
+  if (!isPathInside(workspaceRootRealPath, existingParent.realPath)) {
     throw new Error("marp_cli outputFilePath must stay within the workspace root");
   }
 
-  return candidatePath;
+  return path.join(existingParent.realPath, path.relative(existingParent.path, candidatePath));
 }
 
 function toWorkspaceRelativePath(workspaceRoot: string, filePath: string, workspaceRootRealPath?: string): string {
@@ -330,7 +357,7 @@ async function executeMarpCli(
 
   try {
     const { stdout, stderr } = await execFileImpl(process.execPath, marpArgs, {
-      cwd: workspaceRootPath,
+      cwd: workspaceRootRealPath,
       signal: context?.abortSignal,
       maxBuffer: DEFAULT_MAX_BUFFER
     });

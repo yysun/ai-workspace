@@ -55,12 +55,12 @@ test("createMarpCliTool renders markdown into the requested workspace output pat
     }, {});
 
     assert.equal(capturedCommand, process.execPath);
-    assert.equal(capturedCwd, tempDir);
+    assert.equal(capturedCwd, realTempDir);
     assert.deepEqual(capturedArgs, [
       "/mock/marp-cli.js",
       "--no-config-file",
       "--output",
-      path.join(tempDir, "output", "deck.html"),
+      path.join(realTempDir, "output", "deck.html"),
       path.join(realTempDir, "slides", "deck.md")
     ]);
     assert.deepEqual(result, {
@@ -110,10 +110,55 @@ test("createMarpCliTool passes format, config, and local-file flags when request
       "--pptx",
       "--allow-local-files",
       "--output",
-      path.join(tempDir, "rendered", "deck.pptx"),
+      path.join(realTempDir, "rendered", "deck.pptx"),
       path.join(realTempDir, "deck.md")
     ]);
     assert.equal((result as { stdout?: string }).stdout, "generated");
+  });
+});
+
+test("createMarpCliTool resolves output paths through existing real directories", async () => {
+  await withTempDir(async (tempDir) => {
+    const realTempDir = await realpath(tempDir);
+    const realOutputDir = path.join(realTempDir, "real-output");
+    const linkedOutputDir = path.join(tempDir, "rendered");
+    const deckPath = path.join(tempDir, "deck.md");
+    await mkdir(realOutputDir, { recursive: true });
+    await writeFile(deckPath, "# Demo\n", "utf8");
+    await import("node:fs/promises").then(({ symlink }) => symlink(realOutputDir, linkedOutputDir, "dir"));
+
+    let capturedArgs: string[] = [];
+    const tool = createMarpCliTool({
+      workspaceRoot: tempDir,
+      binaryPath: "/mock/marp-cli.js",
+      execFileImpl: async (_command, args) => {
+        capturedArgs = args;
+        const outputIndex = args.indexOf("--output");
+        await writeFile(args[outputIndex + 1] as string, "html", "utf8");
+        return { stdout: "", stderr: "" };
+      }
+    });
+
+    const result = await tool.execute?.({
+      markdownPath: "deck.md",
+      outputFilePath: "rendered/deck.html"
+    }, {});
+
+    assert.deepEqual(capturedArgs, [
+      "/mock/marp-cli.js",
+      "--no-config-file",
+      "--output",
+      path.join(realOutputDir, "deck.html"),
+      path.join(realTempDir, "deck.md")
+    ]);
+    assert.deepEqual(result, {
+      ok: true,
+      format: "html",
+      markdownPath: "deck.md",
+      outputFilePath: "real-output/deck.html",
+      bytesWritten: Buffer.byteLength("html", "utf8"),
+      message: "rendered html to real-output/deck.html"
+    });
   });
 });
 
