@@ -42,15 +42,17 @@ Some tool events also include a `toolCallId`, which is mainly used by the intera
 
 ## Safety And Compatibility Work
 
-This layer also handles a few safety details for the host. It expands shell argument placeholders like `$NAME` and `${NAME}` before a tool runs, but hides secret values when those tool results are shown in events. It also recognizes paused human-input tool results from `ask_user_input`, `human_intervention_request`, and the local compatibility alias `ask_user_question`, and it closes any request-scoped storage provider once the turn ends.
+This layer also handles a few safety details for the host. It expands shell argument placeholders like `$NAME` and `${NAME}` before a tool runs, but hides secret values when those tool results are shown in events. It also recognizes paused human-input tool results from `ask_user_input`, `human_intervention_request`, and the local compatibility alias `ask_user_question`, injects the incoming Bearer token into request-scoped API tool config as `API_ACCESS_TOKEN`, and closes any request-scoped storage provider once the turn ends.
 
 ## Request-Owned Tools
 
 The runtime still relies on `llm-runtime` for the generic built-ins, but this host adds request-scoped tool surfaces of its own when AI workspace storage is enabled:
 
 - `marp_cli` renders Markdown decks from the user workspace into supported output formats such as `.html`, `.pdf`, `.pptx`, or speaker-note text.
-- `api_request` is added only when the workspace `.env` exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, returns response bodies inline by default, saves bodies under a user-scoped `api-responses` folder only when the caller provides `outputFilePath`, and can reuse successful `GET` responses from an in-memory cache when the caller provides `cacheTtlMs`.
+- `api_request` is added only when the server process environment exposes `API_BASE_URL`. The host constrains calls to that base URL, applies auth and security-context headers, returns response bodies inline by default, saves bodies under a user-scoped path only when the caller provides `outputFilePath` or the body is too large to inline, and can reuse successful `GET` responses from an in-memory cache when the caller provides `cacheTtlMs`.
 - The AI workspace content tools described in [[workspace-tools-and-storage]] are always added. They sit on top of either the file provider or the SQL Server provider and are keyed by the resolved user id.
+
+When AI workspace storage is active, the built-in tool gate is narrower than the default `llm-runtime` surface: `read_file`, `shell_cmd`, and `ask_user_input` stay available, while `write_file`, `list_files`, `search_files`, `create_directory`, and `path_exists` are turned off so host-owned storage boundaries stay in control.
 
 ## Design Boundary
 

@@ -7,7 +7,7 @@ source_paths:
   - "src/cli/testChatCli.ts"
   - "src/cli/streamingTestCli.ts"
   - "src/cli/toolTraceRenderer.ts"
-updated_at: "2026-05-17"
+updated_at: "2026-05-18"
 ---
 
 # Testing CLI
@@ -30,7 +30,7 @@ When the model calls tools, `toolTraceRenderer.ts` decides how much detail to sh
 - `verbose` for bounded argument and payload previews.
 - `debug` for raw-style event output.
 
-The renderer includes special handling for shell commands, file paths, and readable previews so tool output does not drown out assistant text.
+The renderer includes special handling for shell commands, `read_file`, `path_exists`, `api_request`, and `marp_cli` so tool output does not drown out assistant text. For file reads it now summarizes the actual returned line count instead of merely echoing the requested range.
 
 ## Human Input Handling
 

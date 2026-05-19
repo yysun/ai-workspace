@@ -13,7 +13,7 @@ source_paths:
   - ".env.example"
   - "tsconfig.json"
   - "tsconfig.e2e.json"
-updated_at: "2026-05-17"
+updated_at: "2026-05-18"
 ---
 
 # Project Overview
@@ -22,7 +22,7 @@ updated_at: "2026-05-17"
 
 ## Why It Exists
 
-The server exists to be a thin bridge between a client and `llm-runtime`. A caller sends messages, a Bearer token, and optional model hints; the server fills in missing defaults, resolves the user identity, loads the workspace's extra instructions and local environment variables, then lets `llm-runtime` run the actual model, tools, and skills.
+The server exists to be a thin bridge between a client and `llm-runtime`. A caller sends messages, a Bearer token, and optional model hints; the server fills in missing defaults, resolves the user identity, loads the workspace's extra instructions, reads runtime configuration from the server process environment, then lets `llm-runtime` run the actual model, tools, and skills.
 
 ## Main Build And Run Commands
 
@@ -46,6 +46,7 @@ The server exists to be a thin bridge between a client and `llm-runtime`. A call
 - The default local server port is `3000`.
 - Chat requests require a Bearer token and a configured identity lookup before they reach the runtime.
 - User-scoped files and generated API response bodies live under `users/<id>/...` inside the mounted workspace.
+- When `AIW_STORAGE` is enabled, the host keeps `read_file` available but turns off the other generic file-mutating or tree-walking built-ins and replaces that surface with host-owned storage tools plus `marp_cli`.
 - The host expects model-provider credentials through generic `LLM_*` settings and provider-specific environment variables documented in [[provider-and-tool-defaults]].
 
 ## Related Pages

@@ -3,13 +3,13 @@ title: "Project Wiki"
 type: "index"
 status: "active"
 language: "default"
-last_commit: "55ad3d23a2bd160499b2a2d7ecc7b9b8513c5ac2"
-updated_at: "2026-05-17"
+last_commit: "2cf4afc98422ad570ea5a50a220a3cb18624b231"
+updated_at: "2026-05-18"
 ---
 
 # ai-workspace
 
-This wiki tracks the committed repository state at `55ad3d23a2bd160499b2a2d7ecc7b9b8513c5ac2`.
+This wiki tracks the committed repository state at `2cf4afc98422ad570ea5a50a220a3cb18624b231`.
 
 The product is a small HTTP and SSE host around `llm-runtime`. Each chat request resolves a user identity from a Bearer token, loads shared workspace instructions from `AGENTS.md`, registers host-owned workspace tools, and can store per-user AI workspace content on the filesystem or in SQL Server.
 
@@ -41,3 +41,5 @@ The product is a small HTTP and SSE host around `llm-runtime`. Each chat request
 ## Coverage Notes
 
 The current page set groups related files instead of creating one page per file. It covers the committed root docs, auth and route handling, runtime configuration, workspace resolution, host-owned tools, AIW storage providers, CLI modules, tests, HTTP fixtures, and `.docs/` process artifacts.
+
+Recent refresh focus: server-only runtime env loading, AIW-gated built-in tool defaults, the `marp_cli` tool surface, and current API and AIW caching behavior.

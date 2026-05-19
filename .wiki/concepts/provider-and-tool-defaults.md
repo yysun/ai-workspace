@@ -35,21 +35,23 @@ If the request omits a model or uses `default`, the host tries `LLM_MODEL` first
 
 - `LLM_PERMISSION` defaults to `auto`.
 - `LLM_REASONING` defaults to `medium`.
-- Built-in tool selection is explicit, not open-ended. The host always enables `shell_cmd`, `ask_user_input`, and `read_file`, always disables `load_skill` and `web_fetch`, and disables the other generic file built-ins when AI workspace storage tools are active.
+- Built-in tool selection is explicit, not open-ended. The host always enables `shell_cmd`, `ask_user_input`, and `read_file`, always disables `load_skill` and `web_fetch`, and disables `write_file`, `list_files`, `search_files`, `create_directory`, and `path_exists` when AI workspace storage tools are active.
 
 When AI workspace storage is enabled, the host adds request-scoped tools:
 
-- `api_request` appears only when the workspace `.env` defines `API_BASE_URL`.
+- `api_request` appears only when the server process environment defines `API_BASE_URL`.
 - `marp_cli` is registered for user-scoped deck rendering.
 - The AI workspace content tools described in [[workspace-tools-and-storage]] are registered and are keyed by the resolved user id.
 
-For AI workspace storage, `AIW_STORAGE` defaults to `file`, `AIW_WORKSPACE_ID` defaults to `local`, and SQL Server mode requires `AIW_MSSQL_CONNECTION_STRING`.
+For AI workspace storage, the runtime feature switch is the presence of `AIW_STORAGE`. Once enabled, the storage context defaults to `file`, `AIW_WORKSPACE_ID` defaults to `local`, and SQL Server mode requires `AIW_MSSQL_CONNECTION_STRING`.
 
 ## User Identity Defaults
 
 The chat route does not take a standalone `AUTH_USER_URL` variable. Instead, `src/config/env.ts` derives the identity lookup URL from the host-level `API_BASE_URL` and `AUTH_USER_PATH`. If either part is missing, chat requests fail with `401` before the runtime starts.
 
 The `/health` response shows these resolved defaults so someone running the service can quickly confirm the current runtime settings.
+
+One important boundary changed in this repo: these defaults come only from the server process environment. The mounted workspace can contribute `AGENTS.md` instructions and files, but it does not inject runtime env or host-owned tool settings through its own `.env`.
 
 ## Related Pages
 

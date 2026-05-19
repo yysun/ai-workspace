@@ -10,7 +10,7 @@ source_paths:
   - "tests/targeted/resolveUserId.test.ts"
   - "tests/unit/apiTool.test.ts"
   - "tests/unit/contentUtils.test.ts"
-  - "tests/unit/loadWorkspaceEnv.test.ts"
+  - "tests/unit/marpCliTool.test.ts"
   - "tests/unit/runChatCompletion.test.ts"
   - "tests/unit/runtimeConfig.test.ts"
   - "tests/unit/storageFileProvider.test.ts"
@@ -28,14 +28,14 @@ Unit coverage focuses on small helpers that do not need a live model provider. E
 
 - shell argument environment expansion and secret redaction
 - runtime configuration parsing and provider selection defaults
-- workspace `.env` loading behavior
 - host-owned `api_request`, `marp_cli`, and runtime request-tool behavior
 - AI workspace file-provider reads, writes, search, binary handling, and path-boundary checks
+- AIW read-tool caching and cache invalidation on writes
 - streaming CLI rendering and human-input formatting
 
 ## Targeted Tests
 
-Targeted tests sit between unit and e2e checks. They validate workspace-specific integration points such as loading `AGENTS.md`, exchanging a Bearer token for a user id, and wiring the workspace API tool into runtime-facing behavior.
+Targeted tests sit between unit and e2e checks. They validate workspace-specific integration points such as loading `AGENTS.md`, exchanging a Bearer token for a user id, and making sure the `api_request` tool works against a live local HTTP surface.
 
 ## End-To-End Tests
 
